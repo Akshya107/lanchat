@@ -14,17 +14,31 @@ class GatePage extends StatefulWidget {
 
 class _GatePageState extends State<GatePage> {
   final _name = TextEditingController();
+  final _room = TextEditingController();
 
   @override
   void dispose() {
     _name.dispose();
+    _room.dispose();
     super.dispose();
   }
 
   void _enter() {
-    final nick = _name.text.trim().isEmpty ? 'operator' : _name.text.trim();
+    var nick = _name.text.trim();
+    var room = _room.text.trim();
+    final asCommand = RegExp(r'^/?room\s+([A-Za-z0-9\-]+)$', caseSensitive: false).firstMatch(nick);
+    if (asCommand != null) {
+      room = asCommand.group(1) ?? room;
+      nick = 'operator';
+    }
+    if (nick.toLowerCase().startsWith('/room')) {
+      nick = 'operator';
+    }
+    if (nick.isEmpty) {
+      nick = 'operator';
+    }
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => SessionPage(nick: nick)),
+      MaterialPageRoute<void>(builder: (_) => SessionPage(nick: nick, roomHint: room)),
     );
   }
 
@@ -58,12 +72,32 @@ class _GatePageState extends State<GatePage> {
                   focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridGreen)),
                 ),
                 inputFormatters: [LengthLimitingTextInputFormatter(24)],
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              ),
+              const SizedBox(height: 22),
+              Text('> ROOM CODE FROM COMPUTER', style: mono()),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _room,
+                cursorColor: gridGreen,
+                textCapitalization: TextCapitalization.characters,
+                style: mono(size: 18, weight: FontWeight.bold),
+                decoration: InputDecoration(
+                  prefixText: '\$ ',
+                  prefixStyle: mono(size: 18, weight: FontWeight.bold),
+                  hintText: 'B66LMJ',
+                  hintStyle: mono(color: gridDim, size: 18),
+                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridDim)),
+                  focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridGreen)),
+                ),
+                inputFormatters: [LengthLimitingTextInputFormatter(12)],
                 onSubmitted: (_) => _enter(),
               ),
               const SizedBox(height: 28),
               Text(
-                'wifi / hotspot  →  local mesh, no internet\n'
-                'mobile data     →  room code, any city',
+                'Name = who you are.\n'
+                'Room = the code on the computer (room=XXXXXX).\n'
+                'Leave room blank to create a new one.',
                 style: mono(color: gridDim, size: 12),
               ),
               const Spacer(),
@@ -89,9 +123,10 @@ class _GatePageState extends State<GatePage> {
 }
 
 class SessionPage extends StatefulWidget {
-  const SessionPage({super.key, required this.nick});
+  const SessionPage({super.key, required this.nick, this.roomHint = ''});
 
   final String nick;
+  final String roomHint;
 
   @override
   State<SessionPage> createState() => _SessionPageState();
@@ -105,7 +140,7 @@ class _SessionPageState extends State<SessionPage> {
   @override
   void initState() {
     super.initState();
-    session = ChatSession(nick: widget.nick)..addListener(_onTick);
+    session = ChatSession(nick: widget.nick, roomHint: widget.roomHint)..addListener(_onTick);
     session.start();
   }
 
@@ -139,13 +174,42 @@ class _SessionPageState extends State<SessionPage> {
     session.submit(text);
   }
 
+  Future<void> _backToGate() async {
+    await session.stop();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _backToGate();
+        }
+      },
+      child: Scaffold(
       backgroundColor: gridBlack,
       body: SafeArea(
         child: Column(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 2, 10, 2),
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: _backToGate,
+                    child: Text('< BACK', style: mono(size: 13, weight: FontWeight.bold)),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'NEW SESSION',
+                      textAlign: TextAlign.right,
+                      style: mono(color: gridDim, size: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Expanded(
               child: ListView.builder(
                 controller: _scroll,
@@ -200,6 +264,7 @@ class _SessionPageState extends State<SessionPage> {
           ],
         ),
       ),
+    ),
     );
   }
 }

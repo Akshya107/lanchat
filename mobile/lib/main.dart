@@ -17,8 +17,34 @@ void main() {
   runApp(const LanchatApp());
 }
 
-class LanchatApp extends StatelessWidget {
+class LanchatApp extends StatefulWidget {
   const LanchatApp({super.key});
+
+  @override
+  State<LanchatApp> createState() => _LanchatAppState();
+}
+
+class _LanchatAppState extends State<LanchatApp> with WidgetsBindingObserver {
+  bool _hidden = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    setState(() {
+      _hidden = state != AppLifecycleState.resumed;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +59,14 @@ class LanchatApp extends StatelessWidget {
           surface: gridBlack,
         ),
       ),
+      builder: (context, child) {
+        return Stack(
+          children: [
+            child ?? const SizedBox.shrink(),
+            if (_hidden) const ColoredBox(color: gridBlack, child: SizedBox.expand()),
+          ],
+        );
+      },
       home: const GatePage(),
     );
   }

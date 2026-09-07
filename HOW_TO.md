@@ -59,9 +59,10 @@ lanchat --name Ada
 ## 2. Start on the phone
 
 1. Open the **LANCHAT** app.
-2. Type your name (or leave it blank).
-3. Tap **OPEN UPLINK**.
-4. Wait for the hello screen. You will also see a **room** code.
+2. Type your **name** (who you are), not the room code.
+3. Type the computer’s **room code** in the second box (look for `room=XXXXXX` on the computer).
+4. Tap **OPEN UPLINK**.
+5. If you already opened the app, type `/room XXXXXX` in the bottom box and tap **SEND**.
 
 ---
 

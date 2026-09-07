@@ -13,11 +13,12 @@ import 'net/logs.dart';
 import 'net/wan.dart';
 
 class ChatSession extends ChangeNotifier {
-  ChatSession({required this.nick});
+  ChatSession({required this.nick, this.roomHint = ''});
 
   String nick;
+  final String roomHint;
   final peerId = newPeerId();
-  late final String roomSeed = newRoomCode();
+  late final String roomSeed = roomHint.length >= 4 ? normRoom(roomHint) : newRoomCode();
   String room = '';
   String localIp = '0.0.0.0';
   String transport = 'scan';
