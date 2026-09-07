@@ -14,17 +14,22 @@ LANCHAT_GH_BRANCH="${LANCHAT_GH_BRANCH:-main}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/lanchat"
 BIN_DIR="$HOME/.local/bin"
 
-say() { printf '%s\n' "$*"; }
+say() { printf '%s\n' "$*" >&2; }
 die() { printf 'lanchat install failed: %s\n' "$*" >&2; exit 1; }
+
+python_ok() {
+  local c="$1"
+  [[ -x "$c" ]] || return 1
+  "$c" -c 'import sys, venv; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null
+}
 
 find_python() {
   local c
-  for c in python3 python; do
-    if command -v "$c" >/dev/null 2>&1; then
-      if "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
-        command -v "$c"
-        return 0
-      fi
+  for c in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)" "$(command -v python || true)"; do
+    [[ -n "$c" ]] || continue
+    if python_ok "$c"; then
+      echo "$c"
+      return 0
     fi
   done
   return 1
@@ -72,8 +77,8 @@ install_python_linux() {
 ensure_python() {
   local py
   if py="$(find_python)"; then
-    say "Using $($py -V 2>&1)"
-    echo "$py"
+      say "Using $($py -V 2>&1)"
+    printf '%s\n' "$py"
     return
   fi
   case "$(uname -s)" in
@@ -83,7 +88,7 @@ ensure_python() {
   esac
   py="$(find_python)" || die "Python 3.9+ is still missing. Close Terminal, open it again, and re-run the install command."
   say "Using $($py -V 2>&1)"
-  echo "$py"
+  printf '%s\n' "$py"
 }
 
 local_project() {
