@@ -20,6 +20,12 @@ irm https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.ps1 | i
 
 Then they open a **new** terminal and type `lanchat`. Python is installed only if it is missing.
 
+Uninstall (Mac / Linux):
+
+```
+curl -fsSL https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.sh | bash -s -- --uninstall
+```
+
 ## After install
 
 Open Terminal (Mac) or **cmd** (Windows), type:

@@ -24,6 +24,14 @@ irm https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.ps1 | i
 
 Wait until it says Done. If Python is missing, it installs that too. Then **close the window**, open a new one, and type `lanchat`.
 
+**Uninstall** — Mac / Linux (removes `lanchat` only, not Python):
+
+```
+curl -fsSL https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.sh | bash -s -- --uninstall
+```
+
+Windows — delete the folder `%LOCALAPPDATA%\lanchat`.
+
 ---
 
 ## 1. Start on the computer

@@ -4,6 +4,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.sh | bash
 #
 # Then open a new terminal and type:  lanchat
+#
+# Uninstall:
+#   curl -fsSL https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.sh | bash -s -- --uninstall
 set -euo pipefail
 
 # Override with env if you fork.
@@ -103,6 +106,19 @@ local_project() {
   return 1
 }
 
+uninstall() {
+  say "Removing lanchat…"
+  rm -f "$BIN_DIR/lanchat" "$BIN_DIR/ephemeral-chat"
+  if command -v brew >/dev/null 2>&1; then
+    local brew_bin
+    brew_bin="$(brew --prefix 2>/dev/null)/bin"
+    rm -f "$brew_bin/lanchat" "$brew_bin/ephemeral-chat"
+  fi
+  rm -rf "$DATA"
+  say "Removed the lanchat command. Python stays installed (other apps may use it)."
+  say "Open a new Terminal. Typing lanchat should do nothing."
+}
+
 fetch_src() {
   local dest="$1"
   mkdir -p "$dest"
@@ -117,6 +133,10 @@ fetch_src() {
 }
 
 main() {
+  if [[ "${1:-}" == "--uninstall" || "${1:-}" == "uninstall" ]]; then
+    uninstall
+    return
+  fi
   say "Installing lanchat…"
   local py src tmp
   py="$(ensure_python)"

@@ -3,6 +3,9 @@
 #   irm https://raw.githubusercontent.com/Akshya107/lanchat/main/get-lanchat.ps1 | iex
 #
 # Then open a new Command Prompt and type:  lanchat
+# Uninstall:  irm .../get-lanchat.ps1 -OutFile $env:TEMP\get-lanchat.ps1; & $env:TEMP\get-lanchat.ps1 -Uninstall
+
+param([switch]$Uninstall)
 
 $ErrorActionPreference = "Stop"
 $Owner = if ($env:LANCHAT_GH_OWNER) { $env:LANCHAT_GH_OWNER } else { "Akshya107" }
@@ -10,6 +13,13 @@ $Repo = if ($env:LANCHAT_GH_REPO) { $env:LANCHAT_GH_REPO } else { "lanchat" }
 $Branch = if ($env:LANCHAT_GH_BRANCH) { $env:LANCHAT_GH_BRANCH } else { "main" }
 $Data = Join-Path $env:LOCALAPPDATA "lanchat"
 $Bin = Join-Path $Data "bin"
+
+if ($Uninstall) {
+    Write-Host "Removing lanchat…"
+    if (Test-Path $Data) { Remove-Item -Recurse -Force $Data }
+    Write-Host "Removed the lanchat command. Python stays installed."
+    exit 0
+}
 
 function Find-Python {
     foreach ($cmd in @("py", "python", "python3")) {
