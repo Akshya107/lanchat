@@ -21,7 +21,6 @@ from .sound import play_ping
 from .store import MemoryStore
 from .ui import ChatUI
 from .util import default_nick, local_ipv4, local_ipv4_all, new_peer_id
-from .privacy import CaptureWatch
 from .wan import WanRoom
 
 HELP = (
@@ -63,7 +62,6 @@ class ChatApp:
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._log_task: asyncio.Task[None] | None = None
-        self._privacy: CaptureWatch | None = None
         self._running = True
         self._boot = seed_uptime()
 
@@ -316,11 +314,6 @@ class ChatApp:
         except Exception:
             self.beacon = None
         self._loop.create_task(self._opening())
-        self._privacy = CaptureWatch(
-            on_block=lambda: self._loop.call_soon_threadsafe(self.ui.set_shield, True) if self._loop else None,
-            on_clear=lambda: self._loop.call_soon_threadsafe(self.ui.set_shield, False) if self._loop else None,
-        )
-        self._privacy.start()
         try:
             await self.ui.run()
         finally:
@@ -353,9 +346,6 @@ class ChatApp:
 
     async def _shutdown(self) -> None:
         self._running = False
-        if self._privacy is not None:
-            self._privacy.stop()
-            self._privacy = None
         if self._log_task is not None:
             self._log_task.cancel()
             try:

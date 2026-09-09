@@ -56,7 +56,6 @@ class ChatUI:
         self.on_quit = on_quit
         self.on_typing = on_typing
         self.typists: dict[str, float] = {}
-        self.shielded = False
         self.buffer = Buffer(multiline=False, complete_while_typing=False)
         self.buffer.on_text_changed += self._buffer_changed
         self._app: Application[None] | None = None
@@ -129,10 +128,6 @@ class ChatUI:
         assert self._app is not None
         await self._app.run_async()
 
-    def set_shield(self, on: bool) -> None:
-        self.shielded = on
-        self.invalidate()
-
     def invalidate(self) -> None:
         if self._app is not None:
             self._app.invalidate()
@@ -142,13 +137,9 @@ class ChatUI:
             self._app.exit()
 
     def _status_fragments(self) -> StyleAndTextTuples:
-        if self.shielded:
-            return [("class:root", " ")]
         return [("class:status", f" {self._status()} ")]
 
     def _typing_fragments(self) -> StyleAndTextTuples:
-        if self.shielded:
-            return [("class:root", " ")]
         now = time()
         names = [name for name, seen in self.typists.items() if now - seen < 2.4]
         if not names:
@@ -181,9 +172,6 @@ class ChatUI:
             cols = max(20, size.columns)
         except Exception:
             rows, cols = 20, 80
-        if self.shielded:
-            blank = " " * cols
-            return [("class:root", ("\n".join([blank] * rows)))]
 
         rendered: list[StyleAndTextTuples] = []
         for msg in self.store.messages:
