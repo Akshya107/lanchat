@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
@@ -10,14 +11,19 @@ import 'net/crypto.dart';
 import 'net/join.dart';
 import 'net/lan.dart';
 import 'net/logs.dart';
+import 'net/operator.dart';
+import 'net/room_ctl.dart';
+import 'net/spam.dart';
 import 'net/wan.dart';
 
 class ChatSession extends ChangeNotifier {
-  ChatSession({required this.nick, this.roomHint = ''});
+  ChatSession({required this.nick, this.roomHint = '', this.masterKeyHex = ''});
 
   String nick;
   final String roomHint;
+  final String masterKeyHex;
   final peerId = newPeerId();
+  String did = '';
   late final String roomSeed = roomHint.length >= 4 ? normRoom(roomHint) : newRoomCode();
   String room = '';
   String localIp = '0.0.0.0';
@@ -25,6 +31,7 @@ class ChatSession extends ChangeNotifier {
   int tcpPort = 0;
   bool muted = false;
   bool running = false;
+  bool kicked = false;
 
   final lines = <TermLine>[];
   final typists = <String, DateTime>{};
@@ -32,9 +39,15 @@ class ChatSession extends ChangeNotifier {
 
   LanMesh? _lan;
   WanRoom? _wan;
+  RoomCtl? ctl;
+  Uint8List? _dhSk;
+  SimpleKeyPair? _operatorSk;
   Timer? _typingExpire;
+  Timer? _hostBeacon;
   DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
   bool _typingOn = false;
+
+  bool get waitingOutside => ctl != null && !ctl!.admitted;
 
   String get joinCode {
     try {
@@ -49,28 +62,46 @@ class ChatSession extends ChangeNotifier {
 
   String get status {
     final token = joinCode.replaceAll('-', '');
-    return 'uplink  $localIp  path=$transport  room=$room  token=$token';
+    final role = ctl?.isHost == true ? 'host' : 'guest';
+    final mode = ctl?.mode ?? 'open';
+    final waitN = ctl?.waiting.length ?? 0;
+    final lobby = waitingOutside ? '  lobby' : '';
+    return '⟨ NODE ⟩  $localIp  path=$transport  room=$room  $role  $mode  waiting=$waitN$lobby  token=$token  ⟨ LIVE ⟩';
   }
 
   String get typingLabel {
+    if (waitingOutside) {
+      return '';
+    }
     final now = DateTime.now();
     final names = typists.entries.where((e) => now.difference(e.value).inMilliseconds < 2400).map((e) => e.key).toList();
     if (names.isEmpty) {
       return '';
     }
     if (names.length == 1) {
-      return '${names.first} is typing...';
+      return '⋯ ${names.first} is weaving a thought';
     }
-    return '${names.join(', ')} are typing...';
+    return '⋯ ${names.join(', ')} are weaving thoughts';
   }
 
   Future<void> start() async {
     running = true;
     room = roomSeed;
+    did = await deviceId();
+    final dh = await newX25519();
+    _dhSk = dh.$1;
+    if (masterKeyHex.trim().isNotEmpty) {
+      _operatorSk = await importOperatorKey(masterKeyHex);
+    } else {
+      _operatorSk = await loadOperatorKey();
+    }
     await _detectPath();
     _lan = LanMesh(
       peerId: peerId,
       nick: nick,
+      room: room,
+      dhPkHex: toHex(dh.$2),
+      getRoomKey: () => ctl?.roomKey,
       onChat: _onChat,
       onJoin: (id, name) {
         _sys('node=$name event=register region=local');
@@ -122,7 +153,7 @@ class ChatSession extends ChangeNotifier {
       };
       lines.add(TermLine(kind, frame.$2));
       notifyListeners();
-      await Future<void>.delayed(const Duration(milliseconds: 110));
+      await Future<void>.delayed(const Duration(milliseconds: 220));
     }
     _showCodes();
     await joinRoom(room);
@@ -143,7 +174,17 @@ class ChatSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _onChat(String name, String text, String mid) {
+  void _onChat(String name, String text, String mid, String id) {
+    if (waitingOutside) {
+      return;
+    }
+    final c = ctl;
+    if (c != null && c.isHost && id.isNotEmpty && id != peerId) {
+      if (c.spam.note(id, text)) {
+        unawaited(_spamKick(id, name));
+        return;
+      }
+    }
     if (mid.isNotEmpty) {
       if (_seen.contains(mid)) {
         return;
@@ -158,8 +199,24 @@ class ChatSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _spamKick(String id, String name) async {
+    final c = ctl;
+    if (c == null || !c.isHost) {
+      return;
+    }
+    final payloads = await c.kickPayloads(id.isNotEmpty ? id : name, spam: true);
+    if (payloads.isEmpty) {
+      return;
+    }
+    _syncKey();
+    for (final payload in payloads) {
+      _signal(payload);
+    }
+    _sys('kicked $name  spam  wait ${SpamWatch.banSec}s');
+  }
+
   void setTyping(String name, bool on) {
-    if (name.isEmpty) {
+    if (waitingOutside || name.isEmpty) {
       return;
     }
     if (on) {
@@ -171,6 +228,9 @@ class ChatSession extends ChangeNotifier {
   }
 
   void localTyping(bool on) {
+    if (waitingOutside) {
+      return;
+    }
     final now = DateTime.now();
     if (on && _typingOn && now.difference(_lastTypingSent).inMilliseconds < 400) {
       return;
@@ -181,7 +241,34 @@ class ChatSession extends ChangeNotifier {
     _typingOn = on;
     _lastTypingSent = now;
     _lan?.sendTyping(on);
-    _wan?.publish({'t': 'typing', 'on': on});
+    unawaited(_wan?.publishChat({'t': 'typing', 'on': on}) ?? Future.value());
+  }
+
+  bool _hostOnly() {
+    if (ctl?.isHost == true) {
+      return true;
+    }
+    _sys('host only');
+    return false;
+  }
+
+  void _signal(Map<String, Object?> payload) {
+    _wan?.publishSignal(payload);
+  }
+
+  void _syncKey() {
+    _wan?.setRoomKey(ctl?.roomKey);
+  }
+
+  void _startHostBeacon() {
+    _hostBeacon?.cancel();
+    _hostBeacon = Timer.periodic(const Duration(seconds: 8), (_) {
+      final c = ctl;
+      if (c == null || !c.isHost) {
+        return;
+      }
+      _wan?.publishSignal(c.hostPayload());
+    });
   }
 
   Future<void> submit(String raw) async {
@@ -201,7 +288,7 @@ class ChatSession extends ChangeNotifier {
       return;
     }
     if (lower == '/help' || lower == '/?') {
-      _sys('slash: /join CODE  /room CODE  /code  /clear  /nick NAME  /mute  /quit');
+      _sys('slash: /join /room /lock /open /admit NAME /deny NAME /kick NAME /waiting /claim KEY /master /host /code /clear /nick /mute /quit');
       return;
     }
     if (lower == '/code' || lower == '/listen') {
@@ -210,6 +297,143 @@ class ChatSession extends ChangeNotifier {
     }
     if (lower == '/peers') {
       _sys('path=$transport room=$room');
+      return;
+    }
+    if (lower == '/host') {
+      final c = ctl;
+      if (c == null) {
+        _sys('no room yet');
+        return;
+      }
+      final role = c.isHost ? 'host' : 'guest';
+      final door = c.admitted ? 'admitted' : 'waiting outside';
+      _sys('you=$role  room=$room  ${c.mode}  $door');
+      return;
+    }
+    if (lower == '/master') {
+      _sys(await hasMasterKey() ? 'master key on this device' : 'no master key on this device');
+      return;
+    }
+    if (lower == '/waiting') {
+      if (!_hostOnly()) {
+        return;
+      }
+      final names = ctl!.waiting.values.map((m) => m.nick).join(', ');
+      _sys(names.isEmpty ? 'door is empty' : 'waiting: $names');
+      return;
+    }
+    if (lower == '/lock' || lower == '/private') {
+      if (!_hostOnly()) {
+        return;
+      }
+      ctl!.locked = true;
+      _signal({'t': 'mode', 'mode': 'private'});
+      _signal(ctl!.hostPayload());
+      _sys('room private  newcomers wait outside');
+      return;
+    }
+    if (lower == '/open' || lower == '/unlock') {
+      if (!_hostOnly()) {
+        return;
+      }
+      ctl!.locked = false;
+      _signal({'t': 'mode', 'mode': 'open'});
+      _signal(ctl!.hostPayload());
+      for (final member in ctl!.waiting.values.toList()) {
+        final payload = await ctl!.autoAdmitPayload(member);
+        if (payload != null) {
+          _signal(payload);
+        }
+      }
+      _sys('room open');
+      return;
+    }
+    if (lower.startsWith('/admit')) {
+      if (!_hostOnly()) {
+        return;
+      }
+      final parts = text.split(RegExp(r'\s+'));
+      if (parts.length < 2) {
+        _sys('usage: /admit NAME');
+        return;
+      }
+      final payloads = await ctl!.admitPayloads(parts.sublist(1).join(' '));
+      if (payloads.isEmpty) {
+        _sys('no one by that name at the door');
+        return;
+      }
+      for (final payload in payloads) {
+        _signal(payload);
+      }
+      _sys('admitted ${parts.sublist(1).join(' ')}');
+      return;
+    }
+    if (lower.startsWith('/deny')) {
+      if (!_hostOnly()) {
+        return;
+      }
+      final parts = text.split(RegExp(r'\s+'));
+      if (parts.length < 2) {
+        _sys('usage: /deny NAME');
+        return;
+      }
+      final payload = ctl!.denyPayload(parts.sublist(1).join(' '));
+      if (payload == null) {
+        _sys('no one by that name at the door');
+        return;
+      }
+      _signal(payload);
+      _sys('denied ${parts.sublist(1).join(' ')}');
+      return;
+    }
+    if (lower.startsWith('/kick')) {
+      if (!_hostOnly()) {
+        return;
+      }
+      final parts = text.split(RegExp(r'\s+'));
+      if (parts.length < 2) {
+        _sys('usage: /kick NAME');
+        return;
+      }
+      final payloads = await ctl!.kickPayloads(parts.sublist(1).join(' '));
+      if (payloads.isEmpty) {
+        _sys('no one by that name in the room');
+        return;
+      }
+      _syncKey();
+      for (final payload in payloads) {
+        _signal(payload);
+      }
+      _sys('kicked ${parts.sublist(1).join(' ')}');
+      return;
+    }
+    if (lower.startsWith('/claim')) {
+      final parts = text.split(RegExp(r'\s+'));
+      if (parts.length < 2) {
+        _sys('usage: /claim KEY   paste the master key');
+        return;
+      }
+      final sk = await importOperatorKey(parts.sublist(1).join(' '));
+      if (sk == null) {
+        _sys('claim failed');
+        return;
+      }
+      _operatorSk = sk;
+      final c = ctl;
+      if (c != null) {
+        c.operatorSk = sk;
+        c.hostId = peerId;
+        final claim = await c.claimPayload();
+        if (claim != null) {
+          _signal(claim);
+        }
+        await Future<void>.delayed(const Duration(seconds: 1));
+        c.becomeHost();
+        _syncKey();
+        _signal(c.hostPayload());
+        _startHostBeacon();
+      }
+      _sys('you hold this room');
       return;
     }
     if (lower == '/mute') {
@@ -232,8 +456,8 @@ class ChatSession extends ChangeNotifier {
       nick = parts.sublist(1).join(' ').trim();
       _lan?.nick = nick;
       _wan?.nick = nick;
+      ctl?.nick = nick;
       _lan?.broadcast({'t': 'nick', 'id': peerId, 'nick': nick});
-      _wan?.publish({'t': 'nick'});
       _sys('operator=$nick');
       return;
     }
@@ -259,9 +483,13 @@ class ChatSession extends ChangeNotifier {
       _sys('unknown command ${text.split(' ').first}');
       return;
     }
+    if (waitingOutside) {
+      _sys('waiting outside  host has not let you in');
+      return;
+    }
     final mid = newMessageId();
-    _lan?.sendChat(text, mid);
-    _wan?.publish({'t': 'chat', 'text': text, 'mid': mid});
+    await _lan?.sendChat(text, mid);
+    await _wan?.publishChat({'t': 'chat', 'text': text, 'mid': mid});
     lines.add(TermLine(LineKind.chat, text, nick: nick, mine: true));
     notifyListeners();
   }
@@ -287,28 +515,202 @@ class ChatSession extends ChangeNotifier {
       _sys('room code too short');
       return;
     }
+    _hostBeacon?.cancel();
     await _wan?.close();
+    final dhSk = _dhSk;
+    if (dhSk == null) {
+      return;
+    }
+    _lan?.room = room;
+    ctl = RoomCtl(peerId: peerId, nick: nick, room: room, dhSk: dhSk, operatorSk: _operatorSk);
+    await ctl!.ensureDhPk();
     _wan = WanRoom(peerId: peerId, nick: nick, room: room, onPayload: _onWan);
     final ok = await _wan!.connect();
-    if (ok) {
-      _sys('room $room  internet on  ($transport)');
-    } else {
+    if (!ok) {
       _wan = null;
       _sys('room offline  no internet / cell blocked mqtt?');
+      return;
     }
+    _sys('room $room  internet on  ($transport)');
+    await _enterRoom();
   }
 
-  void _onWan(Map<String, dynamic> payload) {
-    final t = payload['t'];
+  Future<void> _enterRoom() async {
+    final c = ctl;
+    final wan = _wan;
+    if (c == null || wan == null) {
+      return;
+    }
+    if (c.operatorSk != null) {
+      final claim = await c.claimPayload();
+      if (claim != null) {
+        wan.publishSignal(claim);
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!running || ctl != c) {
+        return;
+      }
+      c.becomeHost();
+      _syncKey();
+      wan.publishSignal(c.hostPayload());
+      _sys('you hold this room  (master key)');
+      _startHostBeacon();
+      notifyListeners();
+      return;
+    }
+    wan.publishSignal(c.askPayload(did: did));
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    if (!running || ctl != c) {
+      return;
+    }
+    if (c.hostId == null) {
+      c.becomeHost();
+      _syncKey();
+      wan.publishSignal(c.hostPayload());
+      _sys('you are host of this room');
+      _startHostBeacon();
+    } else if (c.admitted) {
+      _sys('in the room');
+    } else if (c.locked) {
+      _sys('waiting outside  host must /admit you');
+    } else {
+      _sys('knocking  waiting for host key');
+    }
+    notifyListeners();
+  }
+
+  void _onWan(Map<String, dynamic> payload, String channel) {
+    unawaited(_handleWan(payload, channel));
+  }
+
+  Future<void> _handleWan(Map<String, dynamic> payload, String channel) async {
+    final c = ctl;
+    if (c == null) {
+      return;
+    }
+    final t = '${payload['t'] ?? ''}';
     final name = '${payload['nick'] ?? 'peer'}';
-    if (t == 'chat') {
-      _onChat(name, '${payload['text'] ?? ''}', '${payload['mid'] ?? ''}');
-    } else if (t == 'typing') {
-      setTyping(name, payload['on'] == true);
-    } else if (t == 'hello' || t == 'nick') {
+    final id = '${payload['id'] ?? ''}';
+    if (channel == 'chat') {
+      if (!c.admitted) {
+        return;
+      }
+      if (t == 'chat') {
+        _onChat(name, '${payload['text'] ?? ''}', '${payload['mid'] ?? ''}', id);
+      } else if (t == 'typing') {
+        setTyping(name, payload['on'] == true);
+      }
+      return;
+    }
+    if (t == 'claim') {
+      final wasHost = c.isHost;
+      if (!await c.takeClaim(payload)) {
+        return;
+      }
+      if (wasHost && !c.isHost) {
+        final handoff = await c.handoffPayload(id);
+        if (handoff != null) {
+          _signal(handoff);
+        }
+        _sys('$name took host with the master key');
+      } else if (c.isHost) {
+        _syncKey();
+        _startHostBeacon();
+        _sys('you hold this room');
+      }
+      notifyListeners();
+      return;
+    }
+    if (t == 'host') {
+      if (id == peerId) {
+        return;
+      }
+      final yielded = c.onHost(payload);
+      if (yielded) {
+        _syncKey();
+        _signal(c.askPayload(did: did));
+        _sys('yielding host');
+      }
+      notifyListeners();
+      return;
+    }
+    if (t == 'mode') {
+      if (!c.isHost) {
+        c.locked = '${payload['mode'] ?? 'open'}' == 'private';
+        notifyListeners();
+      }
+      return;
+    }
+    if (t == 'ask') {
+      Uint8List? pk;
+      try {
+        pk = fromHex('${payload['pk'] ?? ''}');
+      } catch (_) {}
+      if (pk == null || pk.length != 32) {
+        return;
+      }
+      final member = Member(id, name, pk, did: '${payload['did'] ?? ''}');
+      c.remember(id, name, pk, did: member.did);
+      if (c.isHost && c.isMuted(id, name, pk, did: member.did)) {
+        final left = c.muteLeft(id, name, pk, did: member.did);
+        _signal({'t': 'deny', 'to': id, 'why': 'spam', 'sec': left});
+        _sys('$name blocked for spam  ${left}s');
+        return;
+      }
+      if (c.isHost && !c.locked && !c.kicked.contains(id)) {
+        final admit = await c.autoAdmitPayload(member);
+        if (admit != null) {
+          _signal(admit);
+        }
+      } else if (c.isHost && c.locked) {
+        _sys('$name waits at the door  /admit $name');
+      }
+      return;
+    }
+    if (t == 'admit' || t == 'rekey' || t == 'handoff') {
+      if ('${payload['to'] ?? ''}' != peerId) {
+        return;
+      }
+      final epoch = int.tryParse('${payload['epoch'] ?? 0}') ?? 0;
+      if (await c.acceptKey('${payload['box'] ?? ''}', epoch)) {
+        _syncKey();
+        _sys(t == 'rekey' ? 'room key rotated' : 'in the room');
+        notifyListeners();
+      }
+      return;
+    }
+    if (t == 'deny') {
+      if ('${payload['to'] ?? ''}' == peerId) {
+        if ('${payload['why'] ?? ''}' == 'spam') {
+          _sys('host blocked you for spam  wait ${payload['sec'] ?? SpamWatch.banSec}s');
+        } else {
+          _sys('host kept you outside');
+        }
+      }
+      return;
+    }
+    if (t == 'kick') {
+      if ('${payload['to'] ?? ''}' != peerId) {
+        return;
+      }
+      kicked = true;
+      if ('${payload['why'] ?? ''}' == 'spam') {
+        _sys('kicked for spam  wait ${payload['sec'] ?? SpamWatch.banSec}s before joining again');
+      } else {
+        _sys('kicked');
+      }
+      await stop();
+      return;
+    }
+    if (t == 'hello' || t == 'nick') {
+      try {
+        c.remember(id, name, fromHex('${payload['pk'] ?? ''}'), did: '${payload['did'] ?? ''}');
+      } catch (_) {}
       _sys('node=$name event=register region=wan');
     } else if (t == 'bye') {
       typists.remove(name);
+      c.waiting.remove(id);
+      c.members.remove(id);
       _sys('node=$name event=drain region=wan');
     }
   }
@@ -341,6 +743,7 @@ class ChatSession extends ChangeNotifier {
   Future<void> stop() async {
     running = false;
     _typingExpire?.cancel();
+    _hostBeacon?.cancel();
     await _wan?.close();
     await _lan?.close();
     lines.clear();

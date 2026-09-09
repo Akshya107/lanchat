@@ -1,11 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 
 import 'crypto.dart';
 
-typedef WanHandler = void Function(Map<String, dynamic> payload);
+typedef WanHandler = void Function(Map<String, dynamic> payload, String channel);
 
 class WanRoom {
   WanRoom({
@@ -22,14 +24,17 @@ class WanRoom {
 
   MqttServerClient? _client;
   bool connected = false;
+  Uint8List? roomKey;
 
-  String get topic => 'ec/v1/$room/m';
+  String get signalTopic => 'ec/v2/$room/s';
+  String get chatTopic => 'ec/v2/$room/m';
+
+  void setRoomKey(Uint8List? key) {
+    roomKey = key;
+  }
 
   Future<bool> connect() async {
     await close();
-    // Cellular often blocks raw MQTT :1883. WebSocket URIs must include ws/wss.
-    // Do not set secure=true together with useWebSocket — the client then
-    // drops WebSocket and tries TLS TCP instead.
     final attempts = <({String host, int port, bool ws})>[
       (host: 'wss://broker.hivemq.com/mqtt', port: 8884, ws: true),
       (host: 'ws://broker.hivemq.com/mqtt', port: 8000, ws: true),
@@ -55,10 +60,10 @@ class WanRoom {
           continue;
         }
         client.updates?.listen(_onMessage);
-        client.subscribe(topic, MqttQos.atMostOnce);
+        client.subscribe(signalTopic, MqttQos.atMostOnce);
+        client.subscribe(chatTopic, MqttQos.atMostOnce);
         _client = client;
         connected = true;
-        publish({'t': 'hello', 'id': peerId, 'nick': nick});
         return true;
       } catch (_) {
         try {
@@ -76,18 +81,38 @@ class WanRoom {
         continue;
       }
       final bytes = rec.payload.message;
-      final payload = openPayload(bytes, room);
-      if (payload == null) {
-        continue;
-      }
-      if ('${payload['id'] ?? ''}' == peerId) {
-        continue;
-      }
-      onPayload(payload);
+      final topic = event.topic;
+      final channel = topic.endsWith('/m') ? 'chat' : 'signal';
+      unawaited(_dispatch(bytes, channel));
     }
   }
 
-  void publish(Map<String, Object?> payload) {
+  Future<void> _dispatch(List<int> bytes, String channel) async {
+    Map<String, dynamic>? payload;
+    if (channel == 'chat') {
+      final key = roomKey;
+      if (key == null) {
+        return;
+      }
+      payload = await openChat(bytes, room, key);
+    } else {
+      try {
+        final obj = jsonDecode(utf8.decode(bytes));
+        if (obj is Map<String, dynamic>) {
+          payload = obj;
+        }
+      } catch (_) {}
+    }
+    if (payload == null) {
+      return;
+    }
+    if ('${payload['id'] ?? ''}' == peerId && payload['t'] != 'claim') {
+      return;
+    }
+    onPayload(payload, channel);
+  }
+
+  void publishSignal(Map<String, Object?> payload) {
     final client = _client;
     if (!connected || client == null) {
       return;
@@ -96,18 +121,32 @@ class WanRoom {
     body.putIfAbsent('id', () => peerId);
     body.putIfAbsent('nick', () => nick);
     final builder = MqttClientPayloadBuilder();
-    builder.addUTF8String(seal(body, room));
-    client.publishMessage(topic, MqttQos.atMostOnce, builder.payload!, retain: false);
+    builder.addUTF8String(jsonEncode(body));
+    client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
+  }
+
+  Future<void> publishChat(Map<String, Object?> payload) async {
+    final client = _client;
+    final key = roomKey;
+    if (!connected || client == null || key == null) {
+      return;
+    }
+    final body = Map<String, Object?>.from(payload);
+    body.putIfAbsent('id', () => peerId);
+    body.putIfAbsent('nick', () => nick);
+    final blob = await sealChat(body, room, key);
+    final builder = MqttClientPayloadBuilder();
+    builder.addUTF8String(blob);
+    client.publishMessage(chatTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
   }
 
   Future<void> close() async {
     final client = _client;
     if (connected && client != null) {
       try {
-        final body = {'t': 'bye', 'id': peerId, 'nick': nick};
         final builder = MqttClientPayloadBuilder();
-        builder.addUTF8String(seal(body, room));
-        client.publishMessage(topic, MqttQos.atMostOnce, builder.payload!, retain: false);
+        builder.addUTF8String(jsonEncode({'t': 'bye', 'id': peerId, 'nick': nick}));
+        client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
       } catch (_) {}
     }
     connected = false;

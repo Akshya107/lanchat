@@ -16,7 +16,17 @@ $Bin = Join-Path $Data "bin"
 
 if ($Uninstall) {
     Write-Host "Removing lanchat…"
+    $key = Join-Path $Data "master.key"
+    $keep = $null
+    if (Test-Path $key) {
+        $keep = Join-Path $env:TEMP "lanchat.master.key"
+        Copy-Item $key $keep -Force
+    }
     if (Test-Path $Data) { Remove-Item -Recurse -Force $Data }
+    if ($keep -and (Test-Path $keep)) {
+        New-Item -ItemType Directory -Force -Path $Data | Out-Null
+        Move-Item $keep (Join-Path $Data "master.key") -Force
+    }
     Write-Host "Removed the lanchat command. Python stays installed."
     exit 0
 }

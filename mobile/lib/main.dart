@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'terminal_page.dart';
+import 'policy_page.dart';
 import 'theme.dart';
 
 void main() {
@@ -67,7 +67,7 @@ class _LanchatAppState extends State<LanchatApp> with WidgetsBindingObserver {
           ],
         );
       },
-      home: const GatePage(),
+      home: const LaunchRoot(),
     );
   }
 }

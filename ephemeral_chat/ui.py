@@ -23,18 +23,20 @@ from .store import MemoryStore, Message
 
 STYLE = Style.from_dict(
     {
-        "root": "bg:#000000 #007700",
-        "log": "bg:#000000 #007700",
-        "log.warn": "bg:#000000 #556600",
-        "sys": "bg:#000000 #006600",
-        "hit": "bg:#00ff00 #000000 bold",
-        "boot": "bg:#000000 bold #00ff66",
-        "hello": "bg:#00ff00 #000000 bold",
-        "status": "bg:#001a00 #00aa00",
-        "typing": "bg:#000000 italic #66ff66",
-        "sep": "bg:#000000 #003300",
-        "prompt": "bg:#000000 bold #00ff00",
-        "input": "bg:#000000 #00ff00",
+        "root": "bg:#000000 #00cc66",
+        "log": "bg:#000000 #006644",
+        "log.warn": "bg:#000000 #665500",
+        "sys": "bg:#000000 #007766",
+        "hit": "bg:#00ffc8 #000000 bold",
+        "boot": "bg:#000000 bold #00ffaa",
+        "hello": "bg:#00ffc8 #000000 bold",
+        "header": "bg:#00221a #00ffd0 bold",
+        "telemetry": "bg:#001410 #00aa88",
+        "status": "bg:#001a14 #00e6a0",
+        "typing": "bg:#000000 italic #66ffcc",
+        "sep": "bg:#000000 #004433",
+        "prompt": "bg:#000000 bold #00ffd0",
+        "input": "bg:#000000 #00ffaa",
     }
 )
 
@@ -84,12 +86,24 @@ class ChatUI:
         body = HSplit(
             [
                 Window(
+                    FormattedTextControl(self._header_fragments, focusable=False),
+                    height=1,
+                    style="class:header",
+                    always_hide_cursor=True,
+                ),
+                Window(
+                    FormattedTextControl(self._telemetry_fragments, focusable=False),
+                    height=1,
+                    style="class:telemetry",
+                    always_hide_cursor=True,
+                ),
+                Window(
                     FormattedTextControl(self._history_fragments, focusable=False),
                     wrap_lines=False,
                     always_hide_cursor=True,
                     style="class:root",
                 ),
-                Window(height=1, char="─", style="class:sep"),
+                Window(height=1, char="━", style="class:sep"),
                 Window(
                     FormattedTextControl(self._status_fragments, focusable=False),
                     height=1,
@@ -105,7 +119,7 @@ class ChatUI:
                 Window(
                     BufferControl(
                         buffer=self.buffer,
-                        input_processors=[BeforeInput("$ ", style="class:prompt")],
+                        input_processors=[BeforeInput("▸ ", style="class:prompt")],
                     ),
                     height=1,
                     dont_extend_height=True,
@@ -136,8 +150,19 @@ class ChatUI:
         if self._app is not None:
             self._app.exit()
 
+    def _header_fragments(self) -> StyleAndTextTuples:
+        return [("class:header", "  ◈  LANCHAT  ▸  CHRONO-MESH  ▸  NODE LIVE  ▸  RAM ONLY  ")]
+
+    def _telemetry_fragments(self) -> StyleAndTextTuples:
+        return [
+            (
+                "class:telemetry",
+                "  ⟨ PHOTON ⟩  ░▒░▒░▒░▒░▒░  ⟨ AES-GCM ⟩  ⟨ X25519 ⟩  ⟨ NO ARCHIVE ⟩  ⟨ EPHEMERAL ⟩ ",
+            )
+        ]
+
     def _status_fragments(self) -> StyleAndTextTuples:
-        return [("class:status", f" {self._status()} ")]
+        return [("class:status", f"  ⟨ NODE ⟩  {self._status()}  ⟨ LIVE ⟩ ")]
 
     def _typing_fragments(self) -> StyleAndTextTuples:
         now = time()
@@ -145,9 +170,9 @@ class ChatUI:
         if not names:
             return [("class:typing", " ")]
         if len(names) == 1:
-            text = f" {names[0]} is typing..."
+            text = f"  ⋯ {names[0]} is weaving a thought"
         else:
-            text = f" {', '.join(names)} are typing..."
+            text = f"  ⋯ {', '.join(names)} are weaving thoughts"
         return [("class:typing", text)]
 
     def set_typing(self, nick: str, active: bool) -> None:
@@ -168,7 +193,7 @@ class ChatUI:
     def _history_fragments(self) -> StyleAndTextTuples:
         try:
             size = get_app().output.get_size()
-            rows = max(1, size.rows - 4)
+            rows = max(1, size.rows - 6)
             cols = max(20, size.columns)
         except Exception:
             rows, cols = 20, 80
@@ -188,7 +213,7 @@ class ChatUI:
     def _message_lines(self, msg: Message, cols: int) -> list[StyleAndTextTuples]:
         if msg.kind in {"chat", "own"}:
             stamp = datetime.fromtimestamp(msg.ts).strftime("%H:%M:%S")
-            line = f"{stamp}  {msg.nick:<12}  {msg.text}"
+            line = f"▸ {stamp}  {msg.nick:<12}  {msg.text}"
             style = "class:hit"
         elif msg.kind == "hello":
             line = msg.text
@@ -200,7 +225,7 @@ class ChatUI:
             line = event_line(msg.text)
             style = "class:sys"
         else:
-            line = msg.text
+            line = f"┊ {msg.text}"
             style = "class:log.warn" if " WARN " in line or " ERROR " in line else "class:log"
         return self._wrap_line([(style, line)], cols)
 

@@ -76,6 +76,9 @@ Windows: `py %USERPROFILE%\Downloads\ephemeral-chat.pyz`
 | `/unmute` | Turn the ting back on |
 | `/join CODE` | LAN join code or `ip:port` on the same Wi-Fi |
 | `/room CODE` | Internet room — phone on mobile data and laptop in another city |
+| `/lock` `/open` `/admit NAME` `/kick NAME` | Host controls who is in the room |
+| `/claim KEY` | Take host with your master key |
+| `lanchat --no-update` | Start without checking GitHub (offline already skips) |
 | `/code` | Show your LAN join code and room code |
 | `/peers` | List connected peers |
 | `/nick NAME` | Change your display name |
@@ -93,7 +96,7 @@ flutter pub get
 flutter run
 ```
 
-1. Type an operator name, tap **OPEN UPLINK**.
+1. Type an operator name, tap **OPEN LATTICE**.
 2. **Wi-Fi / hotspot:** UDP + TCP mesh. Same LAN as the CLI. Share `/code` or `/join XXXX-XXXX-XX`.
 3. **Mobile data / different cities:** MQTT room. Both sides type `/room ABCDEF` (same 6-character code). Works on cellular because the app tries WebSocket brokers first (many cell networks block raw MQTT port 1883).
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 
 def _box(name: str) -> list[str]:
-    title = f"HELLO, {name.upper()}"
-    sub = "YOU ARE NOW IN THE MACHINE"
-    inner = max(len(title), len(sub), 28)
+    title = f"OPERATOR {name.upper()}  ·  LATTICE LOCK"
+    sub = "YOU HAVE CROSSED INTO THE MESH"
+    inner = max(len(title), len(sub), 36)
     title = title.center(inner)
     sub = sub.center(inner)
     bar = "═" * (inner + 2)
@@ -19,24 +19,24 @@ def _box(name: str) -> list[str]:
 
 
 def boot_sequence(name: str) -> list[tuple[str, str]]:
-    """Return (kind, line) frames for the opening sequence."""
+    upper = name.upper()
     frames: list[tuple[str, str]] = [
         ("boot", ""),
-        ("boot", "          ░▒▓█  OPENING NEURAL UPLINK  █▓▒░"),
-        ("boot", "          ░▒▓█     ACCESSING THE GRID     █▓▒░"),
+        ("boot", "              ◈  LANCHAT  ·  CHRONO-MESH NODE  ◈"),
+        ("boot", "              ░▒▓█  OPENING PHOTONIC UPLINK  █▓▒░"),
         ("boot", ""),
-        ("boot", "  > bios checksum ................ OK"),
-        ("boot", "  > quantum bus sync ............. OK"),
-        ("boot", "  > ghost protocol ............... ARMED"),
-        ("boot", "  > retina / voice hash .......... MATCH"),
-        ("boot", f"  > operator lock ................ {name.upper()}"),
-        ("boot", "  > uplink ....................... LIVE"),
+        ("boot", "  > photonic kernel .................. OK"),
+        ("boot", "  > temporal lattice ................. CALIBRATED"),
+        ("boot", "  > ghost-protocol handshake ......... LOCKED"),
+        ("boot", "  > neural lace / operator hash ...... MATCH"),
+        ("boot", f"  > identity vector .................. {upper}"),
+        ("boot", "  > mesh horizon ..................... LIVE"),
         ("boot", ""),
     ]
     for line in _box(name):
         frames.append(("hello", line))
     frames.append(("boot", ""))
-    frames.append(("boot", f"  welcome back, {name}. the grid is listening."))
-    frames.append(("boot", "  type to transmit.  /quit severs the link."))
+    frames.append(("boot", f"  {upper}  ·  the lattice sees you now."))
+    frames.append(("boot", "  speak to transmit  ·  /quit collapses this node."))
     frames.append(("boot", ""))
     return frames

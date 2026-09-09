@@ -114,7 +114,17 @@ uninstall() {
     brew_bin="$(brew --prefix 2>/dev/null)/bin"
     rm -f "$brew_bin/lanchat" "$brew_bin/ephemeral-chat"
   fi
-  rm -rf "$DATA"
+  if [[ -f "$DATA/master.key" ]]; then
+    local keep
+    keep="$(mktemp)"
+    cp "$DATA/master.key" "$keep"
+    rm -rf "$DATA"
+    mkdir -p "$DATA"
+    mv "$keep" "$DATA/master.key"
+    chmod 600 "$DATA/master.key" 2>/dev/null || true
+  else
+    rm -rf "$DATA"
+  fi
   say "Removed the lanchat command. Python stays installed (other apps may use it)."
   say "Open a new Terminal. Typing lanchat should do nothing."
 }

@@ -7,11 +7,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .crypto import open_chat, seal_chat
 from .util import new_message_id
 
-MAX_LINE = 8192
+MAX_LINE = 16384
 
-OnChat = Callable[[str, str, str], None]
+OnChat = Callable[[str, str, str, str], None]
 OnPeer = Callable[[str, str], None]
 OnLeave = Callable[[str, str], None]
 OnTyping = Callable[[str, bool], None]
@@ -56,9 +57,15 @@ class Mesh:
         on_leave: OnLeave,
         on_nick: OnPeer,
         on_typing: OnTyping,
+        room: str = "",
+        dh_pk_hex: str = "",
+        get_room_key: Callable[[], bytes | None] | None = None,
     ) -> None:
         self.peer_id = peer_id
         self.nick = nick
+        self.room = room
+        self.dh_pk_hex = dh_pk_hex
+        self.get_room_key = get_room_key
         self.on_chat = on_chat
         self.on_join = on_join
         self.on_leave = on_leave
@@ -125,9 +132,16 @@ class Mesh:
             async with self._lock:
                 self._pending.discard(marker)
 
+    def _chat_body(self, text: str, mid: str) -> dict:
+        return {"t": "chat", "id": self.peer_id, "nick": self.nick, "text": text, "mid": mid}
+
     async def broadcast_chat(self, text: str) -> str:
         mid = new_message_id()
-        await self._broadcast({"t": "chat", "id": self.peer_id, "nick": self.nick, "text": text, "mid": mid})
+        key = self.get_room_key() if self.get_room_key else None
+        if key is None:
+            return mid
+        blob = seal_chat(self._chat_body(text, mid), self.room, key)
+        await self._broadcast({"t": "box", "b": blob})
         return mid
 
     async def announce_nick(self, nick: str) -> None:
@@ -135,7 +149,15 @@ class Mesh:
         await self._broadcast({"t": "nick", "id": self.peer_id, "nick": nick})
 
     async def broadcast_typing(self, active: bool) -> None:
-        await self._broadcast({"t": "typing", "id": self.peer_id, "nick": self.nick, "on": active})
+        key = self.get_room_key() if self.get_room_key else None
+        if key is None:
+            return
+        blob = seal_chat(
+            {"t": "typing", "id": self.peer_id, "nick": self.nick, "on": active},
+            self.room,
+            key,
+        )
+        await self._broadcast({"t": "box", "b": blob})
 
     async def close(self) -> None:
         self._closing = True
@@ -178,7 +200,17 @@ class Mesh:
     async def _session(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer: Peer | None = None
         try:
-            writer.write(_pack({"t": "hello", "id": self.peer_id, "nick": self.nick}))
+            writer.write(
+                _pack(
+                    {
+                        "t": "hello",
+                        "id": self.peer_id,
+                        "nick": self.nick,
+                        "room": self.room,
+                        "pk": self.dh_pk_hex,
+                    }
+                )
+            )
             await writer.drain()
             raw = await asyncio.wait_for(reader.readline(), 5)
             hello = _unpack(raw)
@@ -220,13 +252,22 @@ class Mesh:
             if not msg:
                 continue
             kind = msg.get("t")
+            if kind == "box":
+                key = self.get_room_key() if self.get_room_key else None
+                if key is None:
+                    continue
+                inner = open_chat(str(msg.get("b") or ""), self.room, key)
+                if not inner:
+                    continue
+                kind = inner.get("t")
+                msg = inner
             if kind == "chat":
                 text = str(msg.get("text") or "")
                 nick = str(msg.get("nick") or peer.nick)[:24]
                 mid = str(msg.get("mid") or "")
                 if text:
                     peer.nick = nick
-                    self.on_chat(nick, text, mid)
+                    self.on_chat(nick, text, mid, peer.peer_id)
             elif kind == "nick":
                 nick = str(msg.get("nick") or "")[:24]
                 if nick:

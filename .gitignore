@@ -26,3 +26,8 @@ mobile/android/.gradle/
 mobile/android/local.properties
 *.iml
 *.pyz
+.master.key
+.master.pem
+.operator_pub.hex
+master.key
+device.id

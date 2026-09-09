@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'hud.dart';
 import 'models/line.dart';
 import 'session.dart';
 import 'theme.dart';
@@ -15,11 +16,13 @@ class GatePage extends StatefulWidget {
 class _GatePageState extends State<GatePage> {
   final _name = TextEditingController();
   final _room = TextEditingController();
+  final _master = TextEditingController();
 
   @override
   void dispose() {
     _name.dispose();
     _room.dispose();
+    _master.dispose();
     super.dispose();
   }
 
@@ -38,7 +41,20 @@ class _GatePageState extends State<GatePage> {
       nick = 'operator';
     }
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => SessionPage(nick: nick, roomHint: room)),
+      MaterialPageRoute<void>(
+        builder: (_) => SessionPage(nick: nick, roomHint: room, masterKeyHex: _master.text.trim()),
+      ),
+    );
+  }
+
+  InputDecoration _field({required String hint, required double size}) {
+    return InputDecoration(
+      prefixText: '▸ ',
+      prefixStyle: mono(color: gridCyan, size: size, weight: FontWeight.bold),
+      hintText: hint,
+      hintStyle: mono(color: gridDim, size: size),
+      enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF004433))),
+      focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridCyan)),
     );
   }
 
@@ -46,75 +62,85 @@ class _GatePageState extends State<GatePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: gridBlack,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('░▒▓█  LANCHAT  █▓▒░', style: mono(size: 22, weight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Text('NEURAL GATE', style: mono(color: gridDim)),
-              const SizedBox(height: 32),
-              Text('> IDENTIFY OPERATOR', style: mono()),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _name,
-                autofocus: true,
-                cursorColor: gridGreen,
-                style: mono(size: 18, weight: FontWeight.bold),
-                decoration: InputDecoration(
-                  prefixText: '\$ ',
-                  prefixStyle: mono(size: 18, weight: FontWeight.bold),
-                  hintText: 'ADA',
-                  hintStyle: mono(color: gridDim, size: 18),
-                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridDim)),
-                  focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridGreen)),
-                ),
-                inputFormatters: [LengthLimitingTextInputFormatter(24)],
-                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-              ),
-              const SizedBox(height: 22),
-              Text('> ROOM CODE FROM COMPUTER', style: mono()),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _room,
-                cursorColor: gridGreen,
-                textCapitalization: TextCapitalization.characters,
-                style: mono(size: 18, weight: FontWeight.bold),
-                decoration: InputDecoration(
-                  prefixText: '\$ ',
-                  prefixStyle: mono(size: 18, weight: FontWeight.bold),
-                  hintText: 'B66LMJ',
-                  hintStyle: mono(color: gridDim, size: 18),
-                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridDim)),
-                  focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: gridGreen)),
-                ),
-                inputFormatters: [LengthLimitingTextInputFormatter(12)],
-                onSubmitted: (_) => _enter(),
-              ),
-              const SizedBox(height: 28),
-              Text(
-                'Name = who you are.\n'
-                'Room = the code on the computer (room=XXXXXX).\n'
-                'Leave room blank to create a new one.',
-                style: mono(color: gridDim, size: 12),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: gridBlack,
-                    backgroundColor: gridGreen,
-                    side: const BorderSide(color: gridGreen),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+      body: FuturisticShell(
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const HudBar(left: '◈  LANCHAT  ▸  CHRONO-MESH', right: 'NODE STANDBY'),
+                const SizedBox(height: 18),
+                Text('░▒▓█  CHRONO GATE  █▓▒░', style: mono(color: gridCyan, size: 20, weight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text('PHOTONIC UPLINK  ·  IDENTITY VECTOR REQUIRED', style: mono(color: gridDim, size: 11)),
+                const SizedBox(height: 22),
+                HudFrame(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('IDENTIFY OPERATOR', style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _name,
+                        autofocus: true,
+                        cursorColor: gridCyan,
+                        style: mono(size: 18, weight: FontWeight.bold),
+                        decoration: _field(hint: 'ADA', size: 18),
+                        inputFormatters: [LengthLimitingTextInputFormatter(24)],
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 20),
+                      Text('ROOM CODE FROM COMPUTER', style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _room,
+                        cursorColor: gridCyan,
+                        textCapitalization: TextCapitalization.characters,
+                        style: mono(size: 18, weight: FontWeight.bold),
+                        decoration: _field(hint: 'B66LMJ', size: 18),
+                        inputFormatters: [LengthLimitingTextInputFormatter(12)],
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 20),
+                      Text('MASTER KEY (OPTIONAL)', style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _master,
+                        cursorColor: gridCyan,
+                        obscureText: true,
+                        style: mono(size: 16, weight: FontWeight.bold),
+                        decoration: _field(hint: 'paste to take host', size: 16),
+                        inputFormatters: [LengthLimitingTextInputFormatter(80)],
+                        onSubmitted: (_) => _enter(),
+                      ),
+                    ],
                   ),
-                  onPressed: _enter,
-                  child: Text('OPEN UPLINK', style: mono(color: gridBlack, size: 16, weight: FontWeight.bold)),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Text(
+                  'Name = who you are.\n'
+                  'Room = the code on the computer (room=XXXXXX).\n'
+                  'Leave room blank to create a new one.\n'
+                  'Master key = only you. Takes host in any room.',
+                  style: mono(color: gridDim, size: 12),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: gridBlack,
+                      backgroundColor: gridCyan,
+                      side: const BorderSide(color: gridCyan),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    onPressed: _enter,
+                    child: Text('OPEN LATTICE', style: mono(color: gridBlack, size: 16, weight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -123,10 +149,11 @@ class _GatePageState extends State<GatePage> {
 }
 
 class SessionPage extends StatefulWidget {
-  const SessionPage({super.key, required this.nick, this.roomHint = ''});
+  const SessionPage({super.key, required this.nick, this.roomHint = '', this.masterKeyHex = ''});
 
   final String nick;
   final String roomHint;
+  final String masterKeyHex;
 
   @override
   State<SessionPage> createState() => _SessionPageState();
@@ -140,7 +167,7 @@ class _SessionPageState extends State<SessionPage> {
   @override
   void initState() {
     super.initState();
-    session = ChatSession(nick: widget.nick, roomHint: widget.roomHint)..addListener(_onTick);
+    session = ChatSession(nick: widget.nick, roomHint: widget.roomHint, masterKeyHex: widget.masterKeyHex)..addListener(_onTick);
     session.start();
   }
 
@@ -189,79 +216,101 @@ class _SessionPageState extends State<SessionPage> {
       },
       child: Scaffold(
       backgroundColor: gridBlack,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 2, 10, 2),
-              child: Row(
-                children: [
-                  TextButton(
-                    onPressed: _backToGate,
-                    child: Text('< BACK', style: mono(size: 13, weight: FontWeight.bold)),
-                  ),
-                  Expanded(
-                    child: Text(
-                      'NEW SESSION',
-                      textAlign: TextAlign.right,
-                      style: mono(color: gridDim, size: 11),
+      body: FuturisticShell(
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                child: HudBar(
+                  left: '◈  LANCHAT  ▸  CHRONO-MESH',
+                  right: 'NODE LIVE',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 10, 2),
+                child: Row(
+                  children: [
+                    TextButton(
+                      onPressed: _backToGate,
+                      child: Text('◂ COLLAPSE', style: mono(color: gridCyan, size: 13, weight: FontWeight.bold)),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                controller: _scroll,
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                itemCount: session.lines.length,
-                itemBuilder: (context, i) => _LineView(line: session.lines[i]),
-              ),
-            ),
-            Container(
-              width: double.infinity,
-              color: const Color(0xFF001A00),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Text(session.status, maxLines: 2, overflow: TextOverflow.ellipsis, style: mono(color: gridMid, size: 11)),
-            ),
-            SizedBox(
-              width: double.infinity,
-              height: 22,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Text(session.typingLabel, style: mono(color: gridSoft, size: 12, style: FontStyle.italic)),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _input,
-                      cursorColor: gridGreen,
-                      style: mono(size: 15),
-                      textInputAction: TextInputAction.send,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        prefixText: '\$ ',
-                        prefixStyle: mono(size: 15, weight: FontWeight.bold),
-                        hintText: 'transmit…',
-                        hintStyle: mono(color: gridDim, size: 15),
-                        border: InputBorder.none,
+                    Expanded(
+                      child: Text(
+                        'PHOTONIC SESSION',
+                        textAlign: TextAlign.right,
+                        style: mono(color: gridDim, size: 11),
                       ),
-                      onChanged: (v) => session.localTyping(v.trim().isNotEmpty && !v.trimLeft().startsWith('/')),
-                      onSubmitted: (_) => _send(),
                     ),
-                  ),
-                  TextButton(
-                    onPressed: _send,
-                    child: Text('SEND', style: mono(size: 13, weight: FontWeight.bold)),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+              Expanded(
+                child: session.waitingOutside
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: HudFrame(
+                            child: Text(
+                              'WAITING OUTSIDE\n\nhost has not let you in\nshare your name so they can /admit you',
+                              textAlign: TextAlign.center,
+                              style: mono(size: 14, weight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                        itemCount: session.lines.length,
+                        itemBuilder: (context, i) => _LineView(line: session.lines[i]),
+                      ),
+              ),
+              Container(
+                width: double.infinity,
+                color: const Color(0xFF001A14),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Text(session.status, maxLines: 2, overflow: TextOverflow.ellipsis, style: mono(color: gridCyan, size: 11)),
+              ),
+              SizedBox(
+                width: double.infinity,
+                height: 22,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(session.typingLabel, style: mono(color: gridSoft, size: 12, style: FontStyle.italic)),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _input,
+                        cursorColor: gridCyan,
+                        style: mono(size: 15),
+                        textInputAction: TextInputAction.send,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          prefixText: '▸ ',
+                          prefixStyle: mono(color: gridCyan, size: 15, weight: FontWeight.bold),
+                          hintText: 'transmit across the lattice…',
+                          hintStyle: mono(color: gridDim, size: 15),
+                          border: InputBorder.none,
+                        ),
+                        onChanged: (v) => session.localTyping(v.trim().isNotEmpty && !v.trimLeft().startsWith('/')),
+                        onSubmitted: (_) => _send(),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _send,
+                      child: Text('SEND', style: mono(color: gridCyan, size: 13, weight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -288,7 +337,7 @@ class _LineView extends StatelessWidget {
       LineKind.sys => gridDim,
       _ => gridDim,
     };
-    final bg = line.kind == LineKind.hello ? gridGreen : gridBlack;
+    final bg = line.kind == LineKind.hello ? gridCyan : Colors.transparent;
     return ColoredBox(
       color: bg,
       child: Text(
@@ -321,7 +370,7 @@ class _SciFiBubble extends StatelessWidget {
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 6),
           child: CustomPaint(
-            painter: _HudPainter(color: accent, fill: mine),
+            painter: HudShapePainter(color: accent, fill: mine),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
@@ -347,58 +396,5 @@ class _SciFiBubble extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _HudPainter extends CustomPainter {
-  _HudPainter({required this.color, required this.fill});
-
-  final Color color;
-  final bool fill;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const cut = 10.0;
-    final path = Path()
-      ..moveTo(cut, 0)
-      ..lineTo(size.width - cut, 0)
-      ..lineTo(size.width, cut)
-      ..lineTo(size.width, size.height - cut)
-      ..lineTo(size.width - cut, size.height)
-      ..lineTo(cut, size.height)
-      ..lineTo(0, size.height - cut)
-      ..lineTo(0, cut)
-      ..close();
-
-    if (fill) {
-      canvas.drawPath(path, Paint()..color = color);
-    } else {
-      canvas.drawPath(path, Paint()..color = gridPanel);
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color.withValues(alpha: 0.12)
-          ..style = PaintingStyle.fill,
-      );
-    }
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4,
-    );
-
-    final tick = Paint()
-      ..color = color
-      ..strokeWidth = 2;
-    canvas.drawLine(const Offset(cut, 0), const Offset(cut + 16, 0), tick);
-    canvas.drawLine(Offset(size.width - cut - 16, size.height), Offset(size.width - cut, size.height), tick);
-  }
-
-  @override
-  bool shouldRepaint(covariant _HudPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.fill != fill;
   }
 }

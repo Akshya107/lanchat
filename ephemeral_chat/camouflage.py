@@ -91,10 +91,10 @@ def event_line(detail: str) -> str:
 
 
 def jitter_delay() -> float:
-    # Bursty access-log cadence. 3/4 of the original speed.
+    # Half the previous cadence (already 3/4 of the original).
     if random.random() < 0.35:
-        return random.uniform(0.04, 0.12)
-    return random.uniform(0.16, 0.56)
+        return random.uniform(0.08, 0.24)
+    return random.uniform(0.32, 1.12)
 
 
 def seed_uptime() -> str:

@@ -12,10 +12,11 @@ void main() {
     expect(parseTarget('192.168.1.10:48700').$2, 48700);
   });
 
-  test('room seal opens on the same XOR stream as Python', () {
+  test('room AES-GCM seal opens', () async {
+    final key = newRoomKey();
     const room = 'AB12CD';
-    final sealed = seal({'t': 'hello', 'id': 'abc', 'nick': 'Ada'}, room);
-    final opened = openPayload(sealed.codeUnits, room);
+    final sealed = await sealChat({'t': 'hello', 'id': 'abc', 'nick': 'Ada'}, room, key);
+    final opened = await openChatB64(sealed, room, key);
     expect(opened?['t'], 'hello');
     expect(opened?['nick'], 'Ada');
     expect(normRoom('ab-12-cd'), 'AB12CD');

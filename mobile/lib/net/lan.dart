@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-typedef LanChat = void Function(String nick, String text, String mid);
+import 'crypto.dart';
+
+typedef LanChat = void Function(String nick, String text, String mid, String id);
 typedef LanPeer = void Function(String id, String nick);
 typedef LanTyping = void Function(String nick, bool on);
 
@@ -15,10 +17,16 @@ class LanMesh {
     required this.onJoin,
     required this.onLeave,
     required this.onTyping,
+    this.room = '',
+    this.dhPkHex = '',
+    this.getRoomKey,
   });
 
   final String peerId;
   String nick;
+  String room;
+  String dhPkHex;
+  final Uint8List? Function()? getRoomKey;
   final LanChat onChat;
   final LanPeer onJoin;
   final LanPeer onLeave;
@@ -162,7 +170,7 @@ class LanMesh {
     String nick = 'peer';
     final buf = StringBuffer();
     try {
-      _write(socket, {'t': 'hello', 'id': this.peerId, 'nick': this.nick});
+      _write(socket, {'t': 'hello', 'id': this.peerId, 'nick': this.nick, 'room': room, 'pk': dhPkHex});
       await for (final chunk in socket) {
         buf.write(utf8.decode(chunk, allowMalformed: true));
         while (true) {
@@ -181,7 +189,19 @@ class LanMesh {
           } catch (_) {
             continue;
           }
-          final t = msg['t'];
+          var t = msg['t'];
+          if (t == 'box') {
+            final key = getRoomKey?.call();
+            if (key == null) {
+              continue;
+            }
+            final inner = await openChatB64('${msg['b'] ?? ''}', room, key);
+            if (inner == null) {
+              continue;
+            }
+            msg = inner;
+            t = msg['t'];
+          }
           if (peerId == null) {
             if (t != 'hello') {
               return;
@@ -200,7 +220,7 @@ class LanMesh {
             final text = '${msg['text'] ?? ''}';
             if (text.isNotEmpty) {
               nick = '${msg['nick'] ?? nick}';
-              onChat(nick, text, '${msg['mid'] ?? ''}');
+              onChat(nick, text, '${msg['mid'] ?? ''}', peerId);
             }
           } else if (t == 'nick') {
             nick = '${msg['nick'] ?? nick}';
@@ -237,12 +257,22 @@ class LanMesh {
     }
   }
 
-  void sendChat(String text, String mid) {
-    broadcast({'t': 'chat', 'id': peerId, 'nick': nick, 'text': text, 'mid': mid});
+  Future<void> sendChat(String text, String mid) async {
+    final key = getRoomKey?.call();
+    if (key == null) {
+      return;
+    }
+    final blob = await sealChat({'t': 'chat', 'id': peerId, 'nick': nick, 'text': text, 'mid': mid}, room, key);
+    broadcast({'t': 'box', 'b': blob});
   }
 
-  void sendTyping(bool on) {
-    broadcast({'t': 'typing', 'id': peerId, 'nick': nick, 'on': on});
+  Future<void> sendTyping(bool on) async {
+    final key = getRoomKey?.call();
+    if (key == null) {
+      return;
+    }
+    final blob = await sealChat({'t': 'typing', 'id': peerId, 'nick': nick, 'on': on}, room, key);
+    broadcast({'t': 'box', 'b': blob});
   }
 
   Future<void> close() async {
