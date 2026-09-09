@@ -81,7 +81,7 @@ class PolicyPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                HudBar(left: '◈  LANCHAT  ▸  DIRECTIVE 01', right: 'CIVILIAN USE'),
+                HudBar(left: '◈  LANCHAT  ▸  DIRECTIVE 01', right: 'CIVILIAN USE', live: true),
                 const SizedBox(height: 16),
                 Expanded(
                   child: HudFrame(
@@ -116,19 +116,7 @@ class PolicyPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: gridBlack,
-                      backgroundColor: gridCyan,
-                      side: const BorderSide(color: gridCyan),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    onPressed: _accept,
-                    child: Text('ACCEPT', style: mono(color: gridBlack, size: 16, weight: FontWeight.bold)),
-                  ),
-                ),
+                HudButton(label: 'ACCEPT', onPressed: _accept),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: () => SystemNavigator.pop(),

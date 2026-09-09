@@ -1,11 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'theme.dart';
 
-class FuturisticShell extends StatelessWidget {
+class FuturisticShell extends StatefulWidget {
   const FuturisticShell({super.key, required this.child});
 
   final Widget child;
+
+  @override
+  State<FuturisticShell> createState() => _FuturisticShellState();
+}
+
+class _FuturisticShellState extends State<FuturisticShell> with SingleTickerProviderStateMixin {
+  late final AnimationController _sweep;
+
+  @override
+  void initState() {
+    super.initState();
+    _sweep = AnimationController(vsync: this, duration: const Duration(milliseconds: 2800))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _sweep.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -15,7 +35,13 @@ class FuturisticShell extends StatelessWidget {
         const ColoredBox(color: gridBlack),
         CustomPaint(painter: _GridPainter(), child: const SizedBox.expand()),
         CustomPaint(painter: _ScanPainter(), child: const SizedBox.expand()),
-        child,
+        AnimatedBuilder(
+          animation: _sweep,
+          builder: (context, _) {
+            return CustomPaint(painter: _SweepPainter(_sweep.value), child: const SizedBox.expand());
+          },
+        ),
+        widget.child,
         const IgnorePointer(child: CustomPaint(painter: _CornerPainter(), child: SizedBox.expand())),
       ],
     );
@@ -52,6 +78,30 @@ class _ScanPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _SweepPainter extends CustomPainter {
+  _SweepPainter(this.t);
+
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final y = (t * (size.height + 90)) - 50;
+    final rect = Rect.fromLTWH(0, y, size.width, 36);
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x0000FFD0), Color(0x2800FFD0), Color(0x0000FFD0)],
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SweepPainter oldDelegate) => oldDelegate.t != t;
 }
 
 class _CornerPainter extends CustomPainter {
@@ -157,10 +207,11 @@ class HudShapePainter extends CustomPainter {
 }
 
 class HudBar extends StatelessWidget {
-  const HudBar({super.key, required this.left, required this.right});
+  const HudBar({super.key, required this.left, required this.right, this.live = false});
 
   final String left;
   final String right;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
@@ -172,9 +223,116 @@ class HudBar extends StatelessWidget {
         children: [
           Text(left, style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
           const Spacer(),
+          if (live) ...[const PulseLive(), const SizedBox(width: 8)],
           Text(right, style: mono(color: gridDim, size: 11)),
         ],
       ),
     );
   }
+}
+
+class PulseLive extends StatefulWidget {
+  const PulseLive({super.key});
+
+  @override
+  State<PulseLive> createState() => _PulseLiveState();
+}
+
+class _PulseLiveState extends State<PulseLive> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.25, end: 1).animate(_ctrl),
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          color: gridCyan,
+          boxShadow: [BoxShadow(color: gridCyan.withValues(alpha: 0.8), blurRadius: 8)],
+        ),
+      ),
+    );
+  }
+}
+
+class HudButton extends StatefulWidget {
+  const HudButton({super.key, required this.label, required this.onPressed, this.filled = true});
+
+  final String label;
+  final VoidCallback onPressed;
+  final bool filled;
+
+  @override
+  State<HudButton> createState() => _HudButtonState();
+}
+
+class _HudButtonState extends State<HudButton> {
+  bool _down = false;
+
+  void _press() {
+    HapticFeedback.mediumImpact();
+    widget.onPressed();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = widget.filled ? (_down ? gridSoft : gridCyan) : Colors.transparent;
+    final fg = widget.filled ? gridBlack : gridCyan;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _down = true),
+      onTapUp: (_) => setState(() => _down = false),
+      onTapCancel: () => setState(() => _down = false),
+      onTap: _press,
+      child: AnimatedScale(
+        scale: _down ? 0.97 : 1,
+        duration: const Duration(milliseconds: 80),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: gridCyan, width: 1.4),
+            boxShadow: _down || widget.filled
+                ? [BoxShadow(color: gridCyan.withValues(alpha: 0.35), blurRadius: _down ? 4 : 14, spreadRadius: 1)]
+                : null,
+          ),
+          child: Text(widget.label, textAlign: TextAlign.center, style: mono(color: fg, size: 16, weight: FontWeight.bold)),
+        ),
+      ),
+    );
+  }
+}
+
+class LatticeRoute<T> extends PageRouteBuilder<T> {
+  LatticeRoute({required WidgetBuilder builder})
+      : super(
+          pageBuilder: (context, animation, secondary) => builder(context),
+          transitionDuration: const Duration(milliseconds: 420),
+          reverseTransitionDuration: const Duration(milliseconds: 260),
+          transitionsBuilder: (context, animation, secondary, child) {
+            final fade = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+            return FadeTransition(
+              opacity: fade,
+              child: SlideTransition(
+                position: Tween<Offset>(begin: const Offset(0, 0.035), end: Offset.zero).animate(fade),
+                child: child,
+              ),
+            );
+          },
+        );
 }

@@ -136,6 +136,7 @@ class ChatUI:
             mouse_support=False,
             include_default_pygments_style=False,
             erase_when_done=True,
+            refresh_interval=0.35,
         )
 
     async def run(self) -> None:
@@ -151,13 +152,16 @@ class ChatUI:
             self._app.exit()
 
     def _header_fragments(self) -> StyleAndTextTuples:
-        return [("class:header", "  ◈  LANCHAT  ▸  CHRONO-MESH  ▸  NODE LIVE  ▸  RAM ONLY  ")]
+        live = "NODE LIVE" if int(time() * 2) % 2 == 0 else "NODE  ●  "
+        return [("class:header", f"  ◈  LANCHAT  ▸  CHRONO-MESH  ▸  {live}  ▸  RAM ONLY  ")]
 
     def _telemetry_fragments(self) -> StyleAndTextTuples:
+        phase = int(time() * 5) % 14
+        bar = ("░" * phase) + "▓" + ("░" * (13 - phase))
         return [
             (
                 "class:telemetry",
-                "  ⟨ PHOTON ⟩  ░▒░▒░▒░▒░▒░  ⟨ AES-GCM ⟩  ⟨ X25519 ⟩  ⟨ NO ARCHIVE ⟩  ⟨ EPHEMERAL ⟩ ",
+                f"  ⟨ PHOTON ⟩  {bar}  ⟨ AES-GCM ⟩  ⟨ X25519 ⟩  ⟨ NO ARCHIVE ⟩ ",
             )
         ]
 
@@ -169,10 +173,11 @@ class ChatUI:
         names = [name for name, seen in self.typists.items() if now - seen < 2.4]
         if not names:
             return [("class:typing", " ")]
+        dots = "." * (1 + int(time() * 3) % 3)
         if len(names) == 1:
-            text = f"  ⋯ {names[0]} is weaving a thought"
+            text = f"  ⋯ {names[0]} is weaving a thought{dots}"
         else:
-            text = f"  ⋯ {', '.join(names)} are weaving thoughts"
+            text = f"  ⋯ {', '.join(names)} are weaving thoughts{dots}"
         return [("class:typing", text)]
 
     def set_typing(self, nick: str, active: bool) -> None:

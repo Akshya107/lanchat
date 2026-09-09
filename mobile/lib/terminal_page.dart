@@ -41,9 +41,7 @@ class _GatePageState extends State<GatePage> {
       nick = 'operator';
     }
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (_) => SessionPage(nick: nick, roomHint: room, masterKeyHex: _master.text.trim()),
-      ),
+      LatticeRoute<void>(builder: (_) => SessionPage(nick: nick, roomHint: room, masterKeyHex: _master.text.trim())),
     );
   }
 
@@ -69,7 +67,7 @@ class _GatePageState extends State<GatePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const HudBar(left: '◈  LANCHAT  ▸  CHRONO-MESH', right: 'NODE STANDBY'),
+                const HudBar(left: '◈  LANCHAT  ▸  CHRONO-MESH', right: 'NODE STANDBY', live: true),
                 const SizedBox(height: 18),
                 Text('░▒▓█  CHRONO GATE  █▓▒░', style: mono(color: gridCyan, size: 20, weight: FontWeight.bold)),
                 const SizedBox(height: 6),
@@ -85,6 +83,8 @@ class _GatePageState extends State<GatePage> {
                         controller: _name,
                         autofocus: true,
                         cursorColor: gridCyan,
+                        cursorWidth: 8,
+                        cursorHeight: 20,
                         style: mono(size: 18, weight: FontWeight.bold),
                         decoration: _field(hint: 'ADA', size: 18),
                         inputFormatters: [LengthLimitingTextInputFormatter(24)],
@@ -96,6 +96,8 @@ class _GatePageState extends State<GatePage> {
                       TextField(
                         controller: _room,
                         cursorColor: gridCyan,
+                        cursorWidth: 8,
+                        cursorHeight: 20,
                         textCapitalization: TextCapitalization.characters,
                         style: mono(size: 18, weight: FontWeight.bold),
                         decoration: _field(hint: 'B66LMJ', size: 18),
@@ -108,6 +110,8 @@ class _GatePageState extends State<GatePage> {
                       TextField(
                         controller: _master,
                         cursorColor: gridCyan,
+                        cursorWidth: 8,
+                        cursorHeight: 18,
                         obscureText: true,
                         style: mono(size: 16, weight: FontWeight.bold),
                         decoration: _field(hint: 'paste to take host', size: 16),
@@ -126,19 +130,7 @@ class _GatePageState extends State<GatePage> {
                   style: mono(color: gridDim, size: 12),
                 ),
                 const SizedBox(height: 22),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: gridBlack,
-                      backgroundColor: gridCyan,
-                      side: const BorderSide(color: gridCyan),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    onPressed: _enter,
-                    child: Text('OPEN LATTICE', style: mono(color: gridBlack, size: 16, weight: FontWeight.bold)),
-                  ),
-                ),
+                HudButton(label: 'OPEN LATTICE', onPressed: _enter),
               ],
             ),
           ),
@@ -173,7 +165,7 @@ class _SessionPageState extends State<SessionPage> {
 
   void _onTick() {
     if (!session.running && mounted) {
-      Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => const GatePage()));
+      Navigator.of(context).pushReplacement(LatticeRoute<void>(builder: (_) => const GatePage()));
       return;
     }
     setState(() {});
@@ -225,6 +217,7 @@ class _SessionPageState extends State<SessionPage> {
                 child: HudBar(
                   left: '◈  LANCHAT  ▸  CHRONO-MESH',
                   right: 'NODE LIVE',
+                  live: true,
                 ),
               ),
               Padding(
@@ -247,18 +240,7 @@ class _SessionPageState extends State<SessionPage> {
               ),
               Expanded(
                 child: session.waitingOutside
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: HudFrame(
-                            child: Text(
-                              'WAITING OUTSIDE\n\nhost has not let you in\nshare your name so they can /admit you',
-                              textAlign: TextAlign.center,
-                              style: mono(size: 14, weight: FontWeight.bold),
-                            ),
-                          ),
-                        ),
-                      )
+                    ? const _WaitingDoor()
                     : ListView.builder(
                         controller: _scroll,
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -282,31 +264,39 @@ class _SessionPageState extends State<SessionPage> {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _input,
-                        cursorColor: gridCyan,
-                        style: mono(size: 15),
-                        textInputAction: TextInputAction.send,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          prefixText: '▸ ',
-                          prefixStyle: mono(color: gridCyan, size: 15, weight: FontWeight.bold),
-                          hintText: 'transmit across the lattice…',
-                          hintStyle: mono(color: gridDim, size: 15),
-                          border: InputBorder.none,
+                child: HudFrame(
+                  padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _input,
+                          cursorColor: gridCyan,
+                          cursorWidth: 8,
+                          cursorHeight: 16,
+                          style: mono(size: 15),
+                          textInputAction: TextInputAction.send,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            prefixText: '▸ ',
+                            prefixStyle: mono(color: gridCyan, size: 15, weight: FontWeight.bold),
+                            hintText: 'transmit across the lattice…',
+                            hintStyle: mono(color: gridDim, size: 15),
+                            border: InputBorder.none,
+                          ),
+                          onChanged: (v) => session.localTyping(v.trim().isNotEmpty && !v.trimLeft().startsWith('/')),
+                          onSubmitted: (_) => _send(),
                         ),
-                        onChanged: (v) => session.localTyping(v.trim().isNotEmpty && !v.trimLeft().startsWith('/')),
-                        onSubmitted: (_) => _send(),
                       ),
-                    ),
-                    TextButton(
-                      onPressed: _send,
-                      child: Text('SEND', style: mono(color: gridCyan, size: 13, weight: FontWeight.bold)),
-                    ),
-                  ],
+                      TextButton(
+                        onPressed: () {
+                          HapticFeedback.selectionClick();
+                          _send();
+                        },
+                        child: Text('SEND', style: mono(color: gridCyan, size: 13, weight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -363,7 +353,18 @@ class _SciFiBubble extends StatelessWidget {
         '${when.hour.toString().padLeft(2, '0')}:${when.minute.toString().padLeft(2, '0')}:${when.second.toString().padLeft(2, '0')}';
     final tag = mine ? 'TX // ${line.nick.toUpperCase()}' : 'RX // ${line.nick.toUpperCase()}';
 
-    return Align(
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('${line.at.microsecondsSinceEpoch}-${line.text}'),
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(offset: Offset((mine ? -14 : 14) * (1 - t), 0), child: child),
+        );
+      },
+      child: Align(
       alignment: mine ? Alignment.centerLeft : Alignment.centerRight,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.78),
@@ -391,6 +392,58 @@ class _SciFiBubble extends StatelessWidget {
                   Text(stamp, style: mono(color: mine ? const Color(0xFF003300) : gridDim, size: 10)),
                 ],
               ),
+            ),
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+}
+
+class _WaitingDoor extends StatefulWidget {
+  const _WaitingDoor();
+
+  @override
+  State<_WaitingDoor> createState() => _WaitingDoorState();
+}
+
+class _WaitingDoorState extends State<_WaitingDoor> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: FadeTransition(
+          opacity: Tween<double>(begin: 0.55, end: 1).animate(_ctrl),
+          child: HudFrame(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const PulseLive(),
+                const SizedBox(height: 14),
+                Text('WAITING OUTSIDE', textAlign: TextAlign.center, style: mono(color: gridCyan, size: 16, weight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                Text(
+                  'host has not let you in\nshare your name so they can /admit you',
+                  textAlign: TextAlign.center,
+                  style: mono(size: 13, weight: FontWeight.bold),
+                ),
+              ],
             ),
           ),
         ),
