@@ -120,9 +120,10 @@ class WanRoom {
     final body = Map<String, Object?>.from(payload);
     body.putIfAbsent('id', () => peerId);
     body.putIfAbsent('nick', () => nick);
+    body.putIfAbsent('room', () => room);
     final builder = MqttClientPayloadBuilder();
     builder.addUTF8String(jsonEncode(body));
-    client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
+    client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: body['t'] == 'host');
   }
 
   Future<void> publishChat(Map<String, Object?> payload) async {
@@ -140,13 +141,18 @@ class WanRoom {
     client.publishMessage(chatTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
   }
 
-  Future<void> close() async {
+  Future<void> close({bool clearRetain = false}) async {
     final client = _client;
     if (connected && client != null) {
       try {
         final builder = MqttClientPayloadBuilder();
-        builder.addUTF8String(jsonEncode({'t': 'bye', 'id': peerId, 'nick': nick}));
-        client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
+        if (clearRetain) {
+          builder.addUTF8String('');
+          client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: true);
+        } else {
+          builder.addUTF8String(jsonEncode({'t': 'bye', 'id': peerId, 'nick': nick, 'room': room}));
+          client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
+        }
       } catch (_) {}
     }
     connected = false;

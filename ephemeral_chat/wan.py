@@ -132,11 +132,11 @@ class WanRoom:
             return
         self._loop.call_soon_threadsafe(self.on_payload, payload, channel)
 
-    def _publish(self, topic: str, body: bytes) -> None:
+    def _publish(self, topic: str, body: bytes, retain: bool = False) -> None:
         if not self.connected or self._client is None:
             return
         try:
-            self._client.publish(topic, body, qos=0, retain=False)
+            self._client.publish(topic, body, qos=0, retain=retain)
         except Exception:
             pass
 
@@ -144,11 +144,12 @@ class WanRoom:
         body = payload.copy()
         body.setdefault("id", self.peer_id)
         body.setdefault("nick", self.nick)
+        body.setdefault("room", self.room)
         try:
             raw = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         except Exception:
             return
-        self._publish(self.signal_topic, raw)
+        self._publish(self.signal_topic, raw, retain=body.get("t") == "host")
 
     def publish_chat(self, payload: dict) -> None:
         if self.room_key is None:
@@ -165,18 +166,21 @@ class WanRoom:
     def set_nick(self, nick: str) -> None:
         self.nick = nick
 
-    def close(self) -> None:
+    def close(self, clear_retain: bool = False) -> None:
         self.connected = False
         client = self._client
         self._client = None
         if client is None:
             return
         try:
-            raw = json.dumps(
-                {"t": "bye", "id": self.peer_id, "nick": self.nick},
-                separators=(",", ":"),
-            ).encode("utf-8")
-            client.publish(self.signal_topic, raw, qos=0, retain=False)
+            if clear_retain:
+                client.publish(self.signal_topic, b"", qos=0, retain=True)
+            else:
+                raw = json.dumps(
+                    {"t": "bye", "id": self.peer_id, "nick": self.nick, "room": self.room},
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                client.publish(self.signal_topic, raw, qos=0, retain=False)
         except Exception:
             pass
         try:

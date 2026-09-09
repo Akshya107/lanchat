@@ -13,7 +13,7 @@ from .util import instance_name, local_ipv4_all
 
 SERVICE_TYPE = "_ephemeral-chat._tcp.local."
 
-OnUp = Callable[[str, str, str, int], None]
+OnUp = Callable[[str, str, str, int, str], None]
 OnDown = Callable[[str], None]
 
 
@@ -55,6 +55,7 @@ class Discovery:
         self.nick = nick
         self.port = port
         self.local_ip = local_ip
+        self.room = ""
         self.on_up = on_up
         self.on_down = on_down
         self._aiozc: AsyncZeroconf | None = None
@@ -79,7 +80,7 @@ class Discovery:
             f"{host}.{SERVICE_TYPE}",
             addresses=packed,
             port=self.port,
-            properties={"id": self.peer_id, "nick": self.nick},
+            properties={"id": self.peer_id, "nick": self.nick, "room": self.room},
             server=f"{host}.local.",
         )
 
@@ -96,6 +97,13 @@ class Discovery:
 
     async def set_nick(self, nick: str) -> None:
         self.nick = nick
+        if self._aiozc is None:
+            return
+        self._info = self._service_info()
+        await (await self._aiozc.async_update_service(self._info))
+
+    async def set_room(self, room: str) -> None:
+        self.room = room
         if self._aiozc is None:
             return
         self._info = self._service_info()
@@ -154,6 +162,6 @@ class Discovery:
             if not addresses or info.port is None:
                 return
             self._names[name] = peer_id
-            self.on_up(peer_id, nick, addresses[0], int(info.port))
+            self.on_up(peer_id, nick, addresses[0], int(info.port), str(props.get("room") or ""))
         except Exception:
             return

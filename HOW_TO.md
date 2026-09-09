@@ -119,7 +119,15 @@ On the computer (host):
 
 If the room is private, a phone that joins sees **WAITING OUTSIDE** until the host admits them. Chat is encrypted: the internet relay cannot read it. Only people the host let in can.
 
-**Master key (you):** this app’s owner key lives on your computer at `~/.local/share/lanchat/master.key` (Windows: `%LOCALAPPDATA%\lanchat\master.key`). Any device with that key takes host as soon as you join. On a new phone, paste it into **MASTER KEY** on the gate, or type `/claim` and paste. Do not send this file to friends.
+**Master key (you):** this app’s owner key lives on your computer at `~/.local/share/lanchat/master.key` (Windows: `%LOCALAPPDATA%\lanchat\master.key`). Any device with that key can take host and lock **any** room:
+
+```
+/lock R4LRNS
+```
+
+That joins that room, takes host, and makes it private. On the **same Wi‑Fi**, type `/lock` or `/lock lan` — if one other room is nearby, it takes that one. If several rooms are on the LAN, it lists them so you can `/lock CODE`.
+
+On a new phone, paste the key into **MASTER KEY** on the gate, or type `/claim` and paste. Do not send this file to friends.
 
 Friends without the key cannot fake host.
 
@@ -137,7 +145,9 @@ Or type one of these:
 
 | Type this | What happens |
 |---|---|
-| `/lock` | Make the room private. New people wait outside. Host only. |
+| `/lock` | Make this room private. With the master key, also takes host. |
+| `/lock CODE` | Master key: join that room, take host, make it private |
+| `/lock lan` | Master key: take the nearby same-Wi‑Fi room and lock it |
 | `/open` | Let anyone with the code in. Host only. |
 | `/waiting` | List people at the door. Host only. |
 | `/admit Ada` | Let that person in. Host only. |
@@ -191,6 +201,7 @@ Pick your phone or the Android emulator.
 1. Both must type the **same** `/room` code. Spelling matters.
 2. Both need internet for `/room`.
 3. On a real iPhone, allow **Local Network** if you want same-Wi‑Fi join.
-4. Quit and open again if you are stuck. A new room code is created each time — share the new one.
+4. Three windows on one computer each start their **own** room. Copy the first window’s `room=XXXXXX` and type `/room XXXXXX` in the others.
+5. Quit and open again if you are stuck. A new room code is created each time — share the new one.
 
 That is all. Same room code → you are in the same chat.

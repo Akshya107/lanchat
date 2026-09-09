@@ -14,16 +14,17 @@ BEACON_PORT = 48721
 _MAGIC = b"EC01"
 _STRUCT = struct.Struct("!4s16s24sH")
 
-OnBeacon = Callable[[str, str, str, int], None]
+OnBeacon = Callable[[str, str, str, int, str], None]
 
 
-def _pack(peer_id: str, nick: str, port: int) -> bytes:
+def _pack(peer_id: str, nick: str, port: int, room: str = "") -> bytes:
     pid = bytes.fromhex(peer_id[:32].ljust(32, "0"))[:16]
     name = nick.encode("utf-8")[:24].ljust(24, b"\0")
-    return _STRUCT.pack(_MAGIC, pid, name, port)
+    room_b = "".join(ch for ch in room.upper() if ch.isalnum())[:12].encode("ascii").ljust(12, b"\0")
+    return _STRUCT.pack(_MAGIC, pid, name, port) + room_b
 
 
-def _unpack(data: bytes) -> tuple[str, str, int] | None:
+def _unpack(data: bytes) -> tuple[str, str, int, str] | None:
     if len(data) < _STRUCT.size:
         return None
     try:
@@ -34,7 +35,10 @@ def _unpack(data: bytes) -> tuple[str, str, int] | None:
         return None
     peer_id = pid.hex()
     nick = name.split(b"\0", 1)[0].decode("utf-8", "replace")[:24] or "peer"
-    return peer_id, nick, int(port)
+    room = ""
+    if len(data) >= _STRUCT.size + 12:
+        room = data[_STRUCT.size : _STRUCT.size + 12].split(b"\0", 1)[0].decode("ascii", "replace")
+    return peer_id, nick, int(port), room
 
 
 class _Protocol(asyncio.DatagramProtocol):
@@ -50,20 +54,21 @@ class _Protocol(asyncio.DatagramProtocol):
         parsed = _unpack(data)
         if parsed is None:
             return
-        peer_id, nick, port = parsed
+        peer_id, nick, port, room = parsed
         if peer_id == self.peer_id:
             return
         host = str(addr[0])
         if host.startswith("127."):
             return
-        self.on_beacon(peer_id, nick, host, port)
+        self.on_beacon(peer_id, nick, host, port, room)
 
 
 class Beacon:
-    def __init__(self, peer_id: str, nick: str, tcp_port: int, on_beacon: OnBeacon) -> None:
+    def __init__(self, peer_id: str, nick: str, tcp_port: int, on_beacon: OnBeacon, room: str = "") -> None:
         self.peer_id = peer_id
         self.nick = nick
         self.tcp_port = tcp_port
+        self.room = room
         self.on_beacon = on_beacon
         self._transport: asyncio.DatagramTransport | None = None
         self._task: asyncio.Task[None] | None = None
@@ -103,9 +108,8 @@ class Beacon:
             self._transport = None
 
     async def _announce(self) -> None:
-        payload = _pack(self.peer_id, self.nick, self.tcp_port)
         while self._running:
-            self._broadcast(payload)
+            self._broadcast(_pack(self.peer_id, self.nick, self.tcp_port, self.room))
             try:
                 await asyncio.sleep(1.2)
             except asyncio.CancelledError:

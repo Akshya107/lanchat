@@ -161,9 +161,6 @@ class RoomCtl {
     if (id.isEmpty || id == peerId) {
       return false;
     }
-    if (operatorSk != null && isHost) {
-      return false;
-    }
     if (isHost && id.compareTo(peerId) > 0) {
       return false;
     }

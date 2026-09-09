@@ -16,7 +16,9 @@ class LanMesh {
     required this.onChat,
     required this.onJoin,
     required this.onLeave,
-    required this.onTyping,
+    required     this.onTyping,
+    this.onSignal,
+    this.onLanRoom,
     this.room = '',
     this.dhPkHex = '',
     this.getRoomKey,
@@ -31,6 +33,8 @@ class LanMesh {
   final LanPeer onJoin;
   final LanPeer onLeave;
   final LanTyping onTyping;
+  final void Function(Map<String, dynamic> payload)? onSignal;
+  final void Function(String id, String nick, String room)? onLanRoom;
 
   ServerSocket? _server;
   RawDatagramSocket? _beacon;
@@ -72,12 +76,18 @@ class LanMesh {
     while (name.length < 24) {
       name.add(0);
     }
+    final roomBytes = utf8.encode(room.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), ''));
+    final roomPad = List<int>.filled(12, 0);
+    for (var i = 0; i < roomBytes.length && i < 12; i++) {
+      roomPad[i] = roomBytes[i];
+    }
     final out = BytesBuilder();
     out.add(ascii.encode('EC01'));
     out.add(pid);
     out.add(name.take(24).toList());
     out.addByte((tcpPort >> 8) & 0xFF);
     out.addByte(tcpPort & 0xFF);
+    out.add(roomPad);
     return out.toBytes();
   }
 
@@ -116,9 +126,17 @@ class LanMesh {
     final zero = nameBytes.indexOf(0);
     final name = utf8.decode(zero < 0 ? nameBytes : nameBytes.sublist(0, zero), allowMalformed: true);
     final port = (data[44] << 8) | data[45];
+    var foundRoom = '';
+    if (data.length >= 4 + 16 + 24 + 2 + 12) {
+      final roomBytes = data.sublist(46, 58);
+      foundRoom = String.fromCharCodes(roomBytes.where((b) => b != 0));
+    }
     final host = dg.address.address;
     if (host.startsWith('127.')) {
       return;
+    }
+    if (foundRoom.isNotEmpty) {
+      onLanRoom?.call(id, name.isEmpty ? 'peer' : name, foundRoom);
     }
     unawaited(connect(id, name.isEmpty ? 'peer' : name, host, port));
   }
@@ -214,6 +232,21 @@ class LanMesh {
             _peers[peerId] = socket;
             _nicks[peerId] = nick;
             onJoin(peerId, nick);
+            onSignal?.call(msg);
+            continue;
+          }
+          if (t == 'host' ||
+              t == 'ask' ||
+              t == 'admit' ||
+              t == 'deny' ||
+              t == 'kick' ||
+              t == 'rekey' ||
+              t == 'handoff' ||
+              t == 'claim' ||
+              t == 'mode' ||
+              t == 'hello' ||
+              t == 'bye') {
+            onSignal?.call(msg);
             continue;
           }
           if (t == 'chat') {
@@ -246,6 +279,16 @@ class LanMesh {
 
   void _write(Socket socket, Map<String, Object?> payload) {
     socket.add(utf8.encode('${jsonEncode(payload)}\n'));
+  }
+
+  void broadcastSignal(Map<String, Object?> payload) {
+    final body = Map<String, Object?>.from(payload);
+    body.putIfAbsent('id', () => peerId);
+    body.putIfAbsent('nick', () => nick);
+    if (room.isNotEmpty) {
+      body.putIfAbsent('room', () => room);
+    }
+    broadcast(body);
   }
 
   void broadcast(Map<String, Object?> payload) {

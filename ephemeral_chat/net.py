@@ -16,6 +16,9 @@ OnChat = Callable[[str, str, str, str], None]
 OnPeer = Callable[[str, str], None]
 OnLeave = Callable[[str, str], None]
 OnTyping = Callable[[str, bool], None]
+OnSignal = Callable[[dict], None]
+
+_SIGNAL = {"host", "ask", "admit", "deny", "kick", "rekey", "handoff", "claim", "mode", "hello", "bye"}
 
 
 @dataclass
@@ -60,6 +63,7 @@ class Mesh:
         room: str = "",
         dh_pk_hex: str = "",
         get_room_key: Callable[[], bytes | None] | None = None,
+        on_signal: OnSignal | None = None,
     ) -> None:
         self.peer_id = peer_id
         self.nick = nick
@@ -71,6 +75,7 @@ class Mesh:
         self.on_leave = on_leave
         self.on_nick = on_nick
         self.on_typing = on_typing
+        self.on_signal = on_signal
         self._peers: dict[str, Peer] = {}
         self._pending: set[str] = set()
         self._lock = asyncio.Lock()
@@ -147,6 +152,18 @@ class Mesh:
     async def announce_nick(self, nick: str) -> None:
         self.nick = nick
         await self._broadcast({"t": "nick", "id": self.peer_id, "nick": nick})
+
+    def broadcast_signal(self, payload: dict) -> None:
+        body = dict(payload)
+        body.setdefault("id", self.peer_id)
+        body.setdefault("nick", self.nick)
+        if self.room:
+            body.setdefault("room", self.room)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._broadcast(body))
 
     async def broadcast_typing(self, active: bool) -> None:
         key = self.get_room_key() if self.get_room_key else None
@@ -230,6 +247,8 @@ class Mesh:
                 peer.task = asyncio.current_task()
                 self._peers[peer_id] = peer
             self.on_join(peer_id, nick)
+            if self.on_signal:
+                self.on_signal(hello)
             await self._read_loop(peer)
         except (OSError, ConnectionError, asyncio.TimeoutError, asyncio.CancelledError):
             pass
@@ -252,6 +271,10 @@ class Mesh:
             if not msg:
                 continue
             kind = msg.get("t")
+            if kind in _SIGNAL:
+                if self.on_signal:
+                    self.on_signal(msg)
+                continue
             if kind == "box":
                 key = self.get_room_key() if self.get_room_key else None
                 if key is None:

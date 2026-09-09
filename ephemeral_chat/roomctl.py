@@ -154,8 +154,6 @@ class RoomCtl:
         peer_id = str(payload.get("id") or "")
         if not peer_id or peer_id == self.peer_id:
             return False
-        if self.operator_sk is not None and self.is_host:
-            return False
         if self.is_host and peer_id > self.peer_id:
             return False
         yielded = self.is_host and peer_id < self.peer_id
