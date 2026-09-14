@@ -276,32 +276,42 @@ class ChatSession extends ChangeNotifier {
   Future<void> _operatorLock(String raw) async {
     final hasKey = ctl?.operatorSk != null || await hasMasterKey();
     final isHostNow = ctl?.isHost == true;
-    if (!hasKey && !isHostNow) {
-      _sys('master key or host only');
-      return;
-    }
     var code = raw.trim();
-    final low = code.toLowerCase();
-    if (low == 'lan' || low == 'wifi' || low == 'local') {
-      code = '';
-    }
-    var target = code.isEmpty ? '' : normRoom(code);
-    if (target.isEmpty) {
-      final others = _lanOtherRooms();
-      if (others.length == 1) {
-        target = others.first;
-        _sys('same network  taking room $target');
-      } else if (others.length > 1) {
-        _sys('same network rooms: ${others.join(', ')}  type /lock CODE');
-        await _takeAndLock();
+    final lanTake = code.toLowerCase() == 'lan' || code.toLowerCase() == 'wifi' || code.toLowerCase() == 'local';
+    if (lanTake) {
+      if (!hasKey) {
+        _sys('master key needed');
         return;
       }
-    } else if (!hasKey) {
-      _sys('master key needed to lock another room');
+      final others = _lanOtherRooms();
+      if (others.length == 1) {
+        _sys('same network  taking room ${others.first}');
+        await joinRoom(others.first);
+      } else if (others.length > 1) {
+        _sys('same network rooms: ${others.join(', ')}  type /lock CODE');
+        return;
+      } else {
+        _sys('no other room on this network');
+        return;
+      }
+      await _takeAndLock();
       return;
     }
-    if (target.isNotEmpty && target != room) {
-      await joinRoom(target);
+    if (code.isNotEmpty) {
+      if (!hasKey) {
+        _sys('master key needed to lock another room');
+        return;
+      }
+      final target = normRoom(code);
+      if (target != room) {
+        await joinRoom(target);
+      }
+      await _takeAndLock();
+      return;
+    }
+    if (!isHostNow && !hasKey) {
+      _sys('host only');
+      return;
     }
     await _takeAndLock();
   }
@@ -645,7 +655,7 @@ class ChatSession extends ChangeNotifier {
     }
     _knock?.cancel();
     _signal(c.askPayload(did: did));
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 3; i++) {
       await Future<void>.delayed(const Duration(seconds: 1));
       if (!running || ctl != c) {
         return;
@@ -659,24 +669,6 @@ class ChatSession extends ChangeNotifier {
       return;
     }
     if (c.hostId != null && c.hostId != c.peerId) {
-      if (c.operatorSk != null) {
-        final claim = await c.claimPayload();
-        if (claim != null) {
-          _signal(claim);
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        if (!running || ctl != c) {
-          return;
-        }
-        c.becomeHost();
-        _syncKey();
-        _signal(c.hostPayload());
-        await _flushDoor();
-        _sys('you hold this room  (master key)');
-        _startHostBeacon();
-        notifyListeners();
-        return;
-      }
       if (c.admitted) {
         _sys('in the room');
       } else if (c.locked) {
@@ -736,7 +728,7 @@ class ChatSession extends ChangeNotifier {
     if (otherRoom.isNotEmpty) {
       _lanRooms[id] = normRoom(otherRoom);
     }
-    if (channel != 'chat' && otherRoom.isNotEmpty && otherRoom != room) {
+    if (channel != 'chat' && otherRoom.isNotEmpty && normRoom(otherRoom) != room) {
       if (t == 'hello') {
         final key = '$id:$otherRoom';
         if (_hinted.add(key)) {

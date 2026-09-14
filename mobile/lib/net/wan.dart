@@ -60,6 +60,8 @@ class WanRoom {
           continue;
         }
         client.updates?.listen(_onMessage);
+        final clear = MqttClientPayloadBuilder()..addUTF8String('');
+        client.publishMessage(signalTopic, MqttQos.atMostOnce, clear.payload!, retain: true);
         client.subscribe(signalTopic, MqttQos.atMostOnce);
         client.subscribe(chatTopic, MqttQos.atMostOnce);
         _client = client;
@@ -123,7 +125,7 @@ class WanRoom {
     body.putIfAbsent('room', () => room);
     final builder = MqttClientPayloadBuilder();
     builder.addUTF8String(jsonEncode(body));
-    client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: body['t'] == 'host');
+    client.publishMessage(signalTopic, MqttQos.atMostOnce, builder.payload!, retain: false);
   }
 
   Future<void> publishChat(Map<String, Object?> payload) async {

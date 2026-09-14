@@ -68,6 +68,10 @@ class WanRoom:
         def on_connect(client: Any, _ud: Any, _flags: Any, rc: int, *_args: Any) -> None:
             if rc == 0:
                 self.connected = True
+                try:
+                    client.publish(self.signal_topic, b"", qos=0, retain=True)
+                except Exception:
+                    pass
                 client.subscribe(self.signal_topic, qos=0)
                 client.subscribe(self.chat_topic, qos=0)
                 ready.set()
@@ -149,7 +153,7 @@ class WanRoom:
             raw = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         except Exception:
             return
-        self._publish(self.signal_topic, raw, retain=body.get("t") == "host")
+        self._publish(self.signal_topic, raw, retain=False)
 
     def publish_chat(self, payload: dict) -> None:
         if self.room_key is None:

@@ -125,7 +125,7 @@ If the room is private, a phone that joins sees **WAITING OUTSIDE** until the ho
 /lock R4LRNS
 ```
 
-That joins that room, takes host, and makes it private. On the **same Wi‑Fi**, type `/lock` or `/lock lan` — if one other room is nearby, it takes that one. If several rooms are on the LAN, it lists them so you can `/lock CODE`.
+That joins that room, takes host, and makes it private. On the **same Wi‑Fi**, type `/lock lan` — if one other room is nearby, it takes that one. If several are on the LAN, it lists them so you can `/lock CODE`. Plain `/lock` only locks **this** room.
 
 On a new phone, paste the key into **MASTER KEY** on the gate, or type `/claim` and paste. Do not send this file to friends.
 
@@ -145,7 +145,7 @@ Or type one of these:
 
 | Type this | What happens |
 |---|---|
-| `/lock` | Make this room private. With the master key, also takes host. |
+| `/lock` | Make **this** room private. Host, or master key. |
 | `/lock CODE` | Master key: join that room, take host, make it private |
 | `/lock lan` | Master key: take the nearby same-Wi‑Fi room and lock it |
 | `/open` | Let anyone with the code in. Host only. |

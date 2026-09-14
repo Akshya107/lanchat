@@ -215,27 +215,36 @@ class ChatApp:
     async def _operator_lock(self, raw: str) -> None:
         has_key = (self.ctl is not None and self.ctl.operator_sk is not None) or has_master_key()
         is_host = self.ctl is not None and self.ctl.is_host
-        if not has_key and not is_host:
-            self._note("master key or host only")
-            return
         code = raw.strip()
-        if code.lower() in {"lan", "wifi", "local"}:
-            code = ""
-        target = WanRoom._norm(code) if code else ""
-        if not target:
+        lan_take = code.lower() in {"lan", "wifi", "local"}
+        if lan_take:
+            if not has_key:
+                self._note("master key needed")
+                return
             others = self._lan_other_rooms()
             if len(others) == 1:
-                target = others[0]
-                self._note(f"same network  taking room {target}")
+                self._note(f"same network  taking room {others[0]}")
+                await self._set_room(others[0])
             elif len(others) > 1:
                 self._note("same network rooms: " + ", ".join(others) + "  type /lock CODE")
-                await self._take_and_lock()
                 return
-        elif not has_key:
-            self._note("master key needed to lock another room")
+            else:
+                self._note("no other room on this network")
+                return
+            await self._take_and_lock()
             return
-        if target and target != self.room:
-            await self._set_room(target)
+        if code:
+            if not has_key:
+                self._note("master key needed to lock another room")
+                return
+            target = WanRoom._norm(code)
+            if target != self.room:
+                await self._set_room(target)
+            await self._take_and_lock()
+            return
+        if not is_host and not has_key:
+            self._note("host only")
+            return
         await self._take_and_lock()
 
     async def _take_and_lock(self) -> None:
@@ -537,7 +546,7 @@ class ChatApp:
             return
         self._stop_knocking()
         self._signal(ctl.ask_payload(self.did))
-        for _ in range(5):
+        for _ in range(3):
             await asyncio.sleep(1.0)
             if not self._running or self.ctl is not ctl:
                 return
@@ -547,20 +556,6 @@ class ChatApp:
         if not self._running or self.ctl is not ctl:
             return
         if ctl.host_id and ctl.host_id != ctl.peer_id:
-            if ctl.operator_sk is not None:
-                claim = ctl.claim_payload()
-                if claim:
-                    self._signal(claim)
-                await asyncio.sleep(0.4)
-                if not self._running or self.ctl is not ctl:
-                    return
-                ctl.become_host()
-                self._sync_key()
-                self._signal(ctl.host_payload())
-                self._flush_door()
-                self._note("you hold this room  (master key)")
-                self._start_host_beacon()
-                return
             if ctl.admitted:
                 self._note("in the room")
                 return
@@ -663,7 +658,7 @@ class ChatApp:
         other_room = str(payload.get("room") or "")
         if other_room:
             self._lan_rooms[peer_id] = WanRoom._norm(other_room)
-        if channel != "chat" and other_room and other_room != self.room:
+        if channel != "chat" and other_room and WanRoom._norm(other_room) != self.room:
             if kind == "hello":
                 self._hint_other_room(peer_id, nick, other_room)
             return
