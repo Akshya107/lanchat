@@ -7,6 +7,8 @@ import 'package:cryptography/cryptography.dart';
 const wrapSalt = [108, 97, 110, 99, 104, 97, 116, 45, 119, 114, 97, 112, 45, 118, 49]; // lanchat-wrap-v1
 const wrapInfo = [114, 111, 111, 109, 45, 107, 101, 121]; // room-key
 const wrapVersion = 1;
+const roomSalt = [108, 97, 110, 99, 104, 97, 116, 45, 114, 111, 111, 109, 45, 118, 49]; // lanchat-room-v1
+const roomInfo = [114, 111, 111, 109, 45, 97, 101, 115]; // room-aes
 
 String normRoom(String room) {
   final cleaned = room.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
@@ -46,6 +48,18 @@ Future<Uint8List> x25519Public(Uint8List sk) async {
 }
 
 Uint8List newRoomKey() => _random(32);
+
+const lanRoom = 'LAN';
+
+Future<Uint8List> roomAesKey(String room) async {
+  final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
+  final key = await hkdf.deriveKey(
+    secretKey: SecretKey(utf8.encode(normRoom(room))),
+    nonce: roomSalt,
+    info: roomInfo,
+  );
+  return Uint8List.fromList(await key.extractBytes());
+}
 
 Future<Uint8List> _hkdf(List<int> shared) async {
   final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);

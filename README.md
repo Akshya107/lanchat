@@ -74,10 +74,8 @@ Windows: `py %USERPROFILE%\Downloads\ephemeral-chat.pyz`
 | `/clear` or `cls` | Wipe history |
 | `/mute` | Turn off the ting |
 | `/unmute` | Turn the ting back on |
-| `/join CODE` | LAN join code or `ip:port` on the same Wi-Fi |
+| `/join CODE` | Backup LAN join code or `ip:port` if auto-find fails |
 | `/room CODE` | Internet room — phone on mobile data and laptop in another city |
-| `/lock` `/lock CODE` `/lock lan` `/open` `/admit NAME` `/kick NAME` | Host / master-key private rooms |
-| `/claim KEY` | Take host with your master key |
 | `lanchat --no-update` | Start without checking GitHub (offline already skips) |
 | `/code` | Show your LAN join code and room code |
 | `/peers` | List connected peers |

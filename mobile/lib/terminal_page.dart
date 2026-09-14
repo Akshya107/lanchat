@@ -16,13 +16,11 @@ class GatePage extends StatefulWidget {
 class _GatePageState extends State<GatePage> {
   final _name = TextEditingController();
   final _room = TextEditingController();
-  final _master = TextEditingController();
 
   @override
   void dispose() {
     _name.dispose();
     _room.dispose();
-    _master.dispose();
     super.dispose();
   }
 
@@ -41,7 +39,7 @@ class _GatePageState extends State<GatePage> {
       nick = 'operator';
     }
     Navigator.of(context).pushReplacement(
-      LatticeRoute<void>(builder: (_) => SessionPage(nick: nick, roomHint: room, masterKeyHex: _master.text.trim())),
+      LatticeRoute<void>(builder: (_) => SessionPage(nick: nick, roomHint: room)),
     );
   }
 
@@ -91,7 +89,7 @@ class _GatePageState extends State<GatePage> {
                         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                       ),
                       const SizedBox(height: 20),
-                      Text('ROOM CODE FROM COMPUTER', style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
+                      Text('ROOM CODE (OTHER NETWORK ONLY)', style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       TextField(
                         controller: _room,
@@ -102,20 +100,6 @@ class _GatePageState extends State<GatePage> {
                         style: mono(size: 18, weight: FontWeight.bold),
                         decoration: _field(hint: 'B66LMJ', size: 18),
                         inputFormatters: [LengthLimitingTextInputFormatter(12)],
-                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                      ),
-                      const SizedBox(height: 20),
-                      Text('MASTER KEY (OPTIONAL)', style: mono(color: gridCyan, size: 12, weight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _master,
-                        cursorColor: gridCyan,
-                        cursorWidth: 8,
-                        cursorHeight: 18,
-                        obscureText: true,
-                        style: mono(size: 16, weight: FontWeight.bold),
-                        decoration: _field(hint: 'paste to take host', size: 16),
-                        inputFormatters: [LengthLimitingTextInputFormatter(80)],
                         onSubmitted: (_) => _enter(),
                       ),
                     ],
@@ -124,9 +108,8 @@ class _GatePageState extends State<GatePage> {
                 const SizedBox(height: 16),
                 Text(
                   'Name = who you are.\n'
-                  'Room = the code on the computer (room=XXXXXX).\n'
-                  'Leave room blank to create a new one.\n'
-                  'Master key = only you. Takes host in any room.',
+                  'Same Wi-Fi: leave room blank. You find each other.\n'
+                  'Other network: type the computer room code.',
                   style: mono(color: gridDim, size: 12),
                 ),
                 const SizedBox(height: 22),
@@ -141,11 +124,10 @@ class _GatePageState extends State<GatePage> {
 }
 
 class SessionPage extends StatefulWidget {
-  const SessionPage({super.key, required this.nick, this.roomHint = '', this.masterKeyHex = ''});
+  const SessionPage({super.key, required this.nick, this.roomHint = ''});
 
   final String nick;
   final String roomHint;
-  final String masterKeyHex;
 
   @override
   State<SessionPage> createState() => _SessionPageState();
@@ -159,7 +141,7 @@ class _SessionPageState extends State<SessionPage> {
   @override
   void initState() {
     super.initState();
-    session = ChatSession(nick: widget.nick, roomHint: widget.roomHint, masterKeyHex: widget.masterKeyHex)..addListener(_onTick);
+    session = ChatSession(nick: widget.nick, roomHint: widget.roomHint)..addListener(_onTick);
     session.start();
   }
 
@@ -239,9 +221,7 @@ class _SessionPageState extends State<SessionPage> {
                 ),
               ),
               Expanded(
-                child: session.waitingOutside
-                    ? const _WaitingDoor()
-                    : ListView.builder(
+                child: ListView.builder(
                         controller: _scroll,
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                         itemCount: session.lines.length,
@@ -401,53 +381,3 @@ class _SciFiBubble extends StatelessWidget {
   }
 }
 
-class _WaitingDoor extends StatefulWidget {
-  const _WaitingDoor();
-
-  @override
-  State<_WaitingDoor> createState() => _WaitingDoorState();
-}
-
-class _WaitingDoorState extends State<_WaitingDoor> with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: FadeTransition(
-          opacity: Tween<double>(begin: 0.55, end: 1).animate(_ctrl),
-          child: HudFrame(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const PulseLive(),
-                const SizedBox(height: 14),
-                Text('WAITING OUTSIDE', textAlign: TextAlign.center, style: mono(color: gridCyan, size: 16, weight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                Text(
-                  'host has not let you in\nshare your name so they can /admit you',
-                  textAlign: TextAlign.center,
-                  style: mono(size: 13, weight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

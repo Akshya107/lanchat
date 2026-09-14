@@ -14,6 +14,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 WRAP_SALT = b"lanchat-wrap-v1"
 WRAP_INFO = b"room-key"
 WRAP_VERSION = 1
+ROOM_SALT = b"lanchat-room-v1"
+ROOM_INFO = b"room-aes"
 
 
 def new_x25519() -> tuple[bytes, bytes]:
@@ -37,6 +39,18 @@ def x25519_public(sk: bytes) -> bytes:
 
 def new_room_key() -> bytes:
     return os.urandom(32)
+
+
+LAN_ROOM = "LAN"
+
+
+def room_aes_key(room: str) -> bytes:
+    code = "".join(ch for ch in room.upper() if ch.isalnum())[:12]
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=ROOM_SALT, info=ROOM_INFO).derive(code.encode("ascii"))
+
+
+def lan_aes_key() -> bytes:
+    return room_aes_key(LAN_ROOM)
 
 
 def _hkdf(shared: bytes) -> bytes:

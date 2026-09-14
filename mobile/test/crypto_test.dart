@@ -31,6 +31,11 @@ void main() {
     expect(toHex(got!), toHex(roomKey));
   });
 
+  test('room AES key matches Python HKDF', () async {
+    final key = await roomAesKey('K7M2QX');
+    expect(toHex(key), '9f62beed161fa398a54f28831736e96c90331816a70aa0b5ff593f93642dc339');
+  });
+
   test('verifies a Python operator claim', () async {
     final pkHex = 'aa' * 32;
     const sig =

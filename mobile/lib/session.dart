@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
@@ -11,19 +10,14 @@ import 'net/crypto.dart';
 import 'net/join.dart';
 import 'net/lan.dart';
 import 'net/logs.dart';
-import 'net/operator.dart';
-import 'net/room_ctl.dart';
-import 'net/spam.dart';
 import 'net/wan.dart';
 
 class ChatSession extends ChangeNotifier {
-  ChatSession({required this.nick, this.roomHint = '', this.masterKeyHex = ''});
+  ChatSession({required this.nick, this.roomHint = ''});
 
   String nick;
   final String roomHint;
-  final String masterKeyHex;
   final peerId = newPeerId();
-  String did = '';
   late final String roomSeed = roomHint.length >= 4 ? normRoom(roomHint) : newRoomCode();
   String room = '';
   String localIp = '0.0.0.0';
@@ -31,7 +25,6 @@ class ChatSession extends ChangeNotifier {
   int tcpPort = 0;
   bool muted = false;
   bool running = false;
-  bool kicked = false;
 
   final lines = <TermLine>[];
   final typists = <String, DateTime>{};
@@ -39,18 +32,10 @@ class ChatSession extends ChangeNotifier {
 
   LanMesh? _lan;
   WanRoom? _wan;
-  RoomCtl? ctl;
-  Uint8List? _dhSk;
-  SimpleKeyPair? _operatorSk;
+  Uint8List? _lanKey;
   Timer? _typingExpire;
-  Timer? _hostBeacon;
-  Timer? _knock;
-  final _hinted = <String>{};
-  final _lanRooms = <String, String>{};
   DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
   bool _typingOn = false;
-
-  bool get waitingOutside => ctl != null && !ctl!.isHost && ctl!.hostId != null && !ctl!.admitted;
 
   String get joinCode {
     try {
@@ -65,17 +50,10 @@ class ChatSession extends ChangeNotifier {
 
   String get status {
     final token = joinCode.replaceAll('-', '');
-    final role = ctl?.isHost == true ? 'host' : 'guest';
-    final mode = ctl?.mode ?? 'open';
-    final waitN = ctl?.waiting.length ?? 0;
-    final lobby = waitingOutside ? '  lobby' : '';
-    return '⟨ NODE ⟩  $localIp  path=$transport  room=$room  $role  $mode  waiting=$waitN$lobby  token=$token  ⟨ LIVE ⟩';
+    return '⟨ NODE ⟩  $localIp  path=$transport  room=$room  token=$token  ⟨ LIVE ⟩';
   }
 
   String get typingLabel {
-    if (waitingOutside) {
-      return '';
-    }
     final now = DateTime.now();
     final names = typists.entries.where((e) => now.difference(e.value).inMilliseconds < 2400).map((e) => e.key).toList();
     if (names.isEmpty) {
@@ -90,39 +68,23 @@ class ChatSession extends ChangeNotifier {
   Future<void> start() async {
     running = true;
     room = roomSeed;
-    did = await deviceId();
-    final dh = await newX25519();
-    _dhSk = dh.$1;
-    if (masterKeyHex.trim().isNotEmpty) {
-      _operatorSk = await importOperatorKey(masterKeyHex);
-    } else {
-      _operatorSk = await loadOperatorKey();
-    }
+    _lanKey = await roomAesKey(lanRoom);
     await _detectPath();
     _lan = LanMesh(
       peerId: peerId,
       nick: nick,
-      room: room,
-      dhPkHex: toHex(dh.$2),
-      getRoomKey: () => ctl?.roomKey,
+      room: lanRoom,
+      getRoomKey: () => _lanKey,
       onChat: _onChat,
       onJoin: (id, name) {
         _sys('node=$name event=register region=local');
       },
       onLeave: (id, name) {
         typists.remove(name);
-        ctl?.waiting.remove(id);
-        ctl?.members.remove(id);
         _sys('node=$name event=drain region=local');
         notifyListeners();
       },
       onTyping: setTyping,
-      onSignal: (payload) => _onWan(payload, 'signal'),
-      onLanRoom: (id, name, found) {
-        if (found.isNotEmpty) {
-          _lanRooms[id] = normRoom(found);
-        }
-      },
     );
     try {
       tcpPort = await _lan!.start();
@@ -174,10 +136,10 @@ class ChatSession extends ChangeNotifier {
     if (tcpPort > 0 && !localIp.startsWith('0.')) {
       try {
         final code = encodeJoin(localIp, tcpPort);
-        _sys('join $code   ($localIp:$tcpPort)  wifi/hotspot');
+        _sys('same Wi-Fi: just open the app  backup /join $code');
       } catch (_) {}
     }
-    _sys('room $room   mobile data / any internet: /room $room');
+    _sys('other network: /room $room');
   }
 
   void _sys(String text) {
@@ -186,16 +148,6 @@ class ChatSession extends ChangeNotifier {
   }
 
   void _onChat(String name, String text, String mid, String id) {
-    if (waitingOutside) {
-      return;
-    }
-    final c = ctl;
-    if (c != null && c.isHost && id.isNotEmpty && id != peerId) {
-      if (c.spam.note(id, text)) {
-        unawaited(_spamKick(id, name));
-        return;
-      }
-    }
     if (mid.isNotEmpty) {
       if (_seen.contains(mid)) {
         return;
@@ -210,24 +162,8 @@ class ChatSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _spamKick(String id, String name) async {
-    final c = ctl;
-    if (c == null || !c.isHost) {
-      return;
-    }
-    final payloads = await c.kickPayloads(id.isNotEmpty ? id : name, spam: true);
-    if (payloads.isEmpty) {
-      return;
-    }
-    _syncKey();
-    for (final payload in payloads) {
-      _signal(payload);
-    }
-    _sys('kicked $name  spam  wait ${SpamWatch.banSec}s');
-  }
-
   void setTyping(String name, bool on) {
-    if (waitingOutside || name.isEmpty) {
+    if (name.isEmpty) {
       return;
     }
     if (on) {
@@ -239,9 +175,6 @@ class ChatSession extends ChangeNotifier {
   }
 
   void localTyping(bool on) {
-    if (waitingOutside) {
-      return;
-    }
     final now = DateTime.now();
     if (on && _typingOn && now.difference(_lastTypingSent).inMilliseconds < 400) {
       return;
@@ -253,139 +186,6 @@ class ChatSession extends ChangeNotifier {
     _lastTypingSent = now;
     _lan?.sendTyping(on);
     unawaited(_wan?.publishChat({'t': 'typing', 'on': on}) ?? Future.value());
-  }
-
-  bool _hostOnly() {
-    if (ctl?.isHost == true) {
-      return true;
-    }
-    _sys('host only');
-    return false;
-  }
-
-  List<String> _lanOtherRooms() {
-    final seen = <String>[];
-    for (final found in _lanRooms.values) {
-      if (found.isNotEmpty && found != room && !seen.contains(found)) {
-        seen.add(found);
-      }
-    }
-    return seen;
-  }
-
-  Future<void> _operatorLock(String raw) async {
-    final hasKey = ctl?.operatorSk != null || await hasMasterKey();
-    final isHostNow = ctl?.isHost == true;
-    var code = raw.trim();
-    final lanTake = code.toLowerCase() == 'lan' || code.toLowerCase() == 'wifi' || code.toLowerCase() == 'local';
-    if (lanTake) {
-      if (!hasKey) {
-        _sys('master key needed');
-        return;
-      }
-      final others = _lanOtherRooms();
-      if (others.length == 1) {
-        _sys('same network  taking room ${others.first}');
-        await joinRoom(others.first);
-      } else if (others.length > 1) {
-        _sys('same network rooms: ${others.join(', ')}  type /lock CODE');
-        return;
-      } else {
-        _sys('no other room on this network');
-        return;
-      }
-      await _takeAndLock();
-      return;
-    }
-    if (code.isNotEmpty) {
-      if (!hasKey) {
-        _sys('master key needed to lock another room');
-        return;
-      }
-      final target = normRoom(code);
-      if (target != room) {
-        await joinRoom(target);
-      }
-      await _takeAndLock();
-      return;
-    }
-    if (!isHostNow && !hasKey) {
-      _sys('host only');
-      return;
-    }
-    await _takeAndLock();
-  }
-
-  Future<void> _takeAndLock() async {
-    final c = ctl;
-    if (c == null) {
-      _sys('no room yet');
-      return;
-    }
-    c.operatorSk ??= _operatorSk;
-    if (!c.isHost) {
-      if (c.operatorSk == null) {
-        _sys('master key or host only');
-        return;
-      }
-      final claim = await c.claimPayload();
-      if (claim != null) {
-        _signal(claim);
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      if (!running || ctl != c) {
-        return;
-      }
-      c.becomeHost();
-      _syncKey();
-      _signal(c.hostPayload());
-      await _flushDoor();
-      _startHostBeacon();
-      _sys('you hold this room  (master key)');
-    }
-    c.locked = true;
-    _signal({'t': 'mode', 'mode': 'private'});
-    _signal(c.hostPayload());
-    _sys('room $room private  newcomers wait outside');
-    notifyListeners();
-  }
-
-  void _signal(Map<String, Object?> payload) {
-    if (ctl != null) {
-      payload.putIfAbsent('room', () => ctl!.room);
-    }
-    _wan?.publishSignal(payload);
-    _lan?.broadcastSignal(payload);
-  }
-
-  void _syncKey() {
-    _wan?.setRoomKey(ctl?.roomKey);
-  }
-
-  void _startHostBeacon() {
-    _knock?.cancel();
-    _knock = null;
-    _hostBeacon?.cancel();
-    _hostBeacon = Timer.periodic(const Duration(seconds: 3), (_) {
-      final c = ctl;
-      if (c == null || !c.isHost) {
-        return;
-      }
-      _signal(c.hostPayload());
-    });
-  }
-
-  void _startKnocking() {
-    _knock?.cancel();
-    _knock = Timer.periodic(const Duration(seconds: 2), (_) {
-      final c = ctl;
-      if (c == null || c.isHost || c.admitted) {
-        _knock?.cancel();
-        _knock = null;
-        return;
-      }
-      _signal(c.askPayload(did: did));
-    });
   }
 
   Future<void> submit(String raw) async {
@@ -405,7 +205,7 @@ class ChatSession extends ChangeNotifier {
       return;
     }
     if (lower == '/help' || lower == '/?') {
-      _sys('slash: /join /room /lock [ROOM|lan] /open /admit NAME /deny NAME /kick NAME /waiting /claim KEY /master /host /code /clear /nick /mute /quit');
+      _sys('slash: /join /room /code /clear /nick /mute /quit');
       return;
     }
     if (lower == '/code' || lower == '/listen') {
@@ -414,138 +214,6 @@ class ChatSession extends ChangeNotifier {
     }
     if (lower == '/peers') {
       _sys('path=$transport room=$room');
-      return;
-    }
-    if (lower == '/host') {
-      final c = ctl;
-      if (c == null) {
-        _sys('no room yet');
-        return;
-      }
-      final role = c.isHost ? 'host' : 'guest';
-      final door = c.admitted ? 'admitted' : 'waiting outside';
-      _sys('you=$role  room=$room  ${c.mode}  $door');
-      return;
-    }
-    if (lower == '/master') {
-      _sys(await hasMasterKey() ? 'master key on this device' : 'no master key on this device');
-      return;
-    }
-    if (lower == '/waiting') {
-      if (!_hostOnly()) {
-        return;
-      }
-      final names = ctl!.waiting.values.map((m) => m.nick).join(', ');
-      _sys(names.isEmpty ? 'door is empty' : 'waiting: $names');
-      return;
-    }
-    if (lower == '/lock' || lower == '/private' || lower.startsWith('/lock ') || lower.startsWith('/private ')) {
-      final parts = text.split(RegExp(r'\s+'));
-      await _operatorLock(parts.length > 1 ? parts.sublist(1).join(' ') : '');
-      return;
-    }
-    if (lower == '/open' || lower == '/unlock') {
-      if (!_hostOnly()) {
-        return;
-      }
-      ctl!.locked = false;
-      _signal({'t': 'mode', 'mode': 'open'});
-      _signal(ctl!.hostPayload());
-      for (final member in ctl!.waiting.values.toList()) {
-        final payload = await ctl!.autoAdmitPayload(member);
-        if (payload != null) {
-          _signal(payload);
-        }
-      }
-      _sys('room open');
-      return;
-    }
-    if (lower.startsWith('/admit')) {
-      if (!_hostOnly()) {
-        return;
-      }
-      final parts = text.split(RegExp(r'\s+'));
-      if (parts.length < 2) {
-        _sys('usage: /admit NAME');
-        return;
-      }
-      final payloads = await ctl!.admitPayloads(parts.sublist(1).join(' '));
-      if (payloads.isEmpty) {
-        _sys('no one by that name at the door');
-        return;
-      }
-      for (final payload in payloads) {
-        _signal(payload);
-      }
-      _sys('admitted ${parts.sublist(1).join(' ')}');
-      return;
-    }
-    if (lower.startsWith('/deny')) {
-      if (!_hostOnly()) {
-        return;
-      }
-      final parts = text.split(RegExp(r'\s+'));
-      if (parts.length < 2) {
-        _sys('usage: /deny NAME');
-        return;
-      }
-      final payload = ctl!.denyPayload(parts.sublist(1).join(' '));
-      if (payload == null) {
-        _sys('no one by that name at the door');
-        return;
-      }
-      _signal(payload);
-      _sys('denied ${parts.sublist(1).join(' ')}');
-      return;
-    }
-    if (lower.startsWith('/kick')) {
-      if (!_hostOnly()) {
-        return;
-      }
-      final parts = text.split(RegExp(r'\s+'));
-      if (parts.length < 2) {
-        _sys('usage: /kick NAME');
-        return;
-      }
-      final payloads = await ctl!.kickPayloads(parts.sublist(1).join(' '));
-      if (payloads.isEmpty) {
-        _sys('no one by that name in the room');
-        return;
-      }
-      _syncKey();
-      for (final payload in payloads) {
-        _signal(payload);
-      }
-      _sys('kicked ${parts.sublist(1).join(' ')}');
-      return;
-    }
-    if (lower.startsWith('/claim')) {
-      final parts = text.split(RegExp(r'\s+'));
-      if (parts.length < 2) {
-        _sys('usage: /claim KEY   paste the master key');
-        return;
-      }
-      final sk = await importOperatorKey(parts.sublist(1).join(' '));
-      if (sk == null) {
-        _sys('claim failed');
-        return;
-      }
-      _operatorSk = sk;
-      final c = ctl;
-      if (c != null) {
-        c.operatorSk = sk;
-        c.hostId = peerId;
-        final claim = await c.claimPayload();
-        if (claim != null) {
-          _signal(claim);
-        }
-        await Future<void>.delayed(const Duration(seconds: 1));
-        c.becomeHost();
-        _syncKey();
-        _signal(c.hostPayload());
-        _startHostBeacon();
-      }
-      _sys('you hold this room');
       return;
     }
     if (lower == '/mute') {
@@ -568,7 +236,6 @@ class ChatSession extends ChangeNotifier {
       nick = parts.sublist(1).join(' ').trim();
       _lan?.nick = nick;
       _wan?.nick = nick;
-      ctl?.nick = nick;
       _lan?.broadcast({'t': 'nick', 'id': peerId, 'nick': nick});
       _sys('operator=$nick');
       return;
@@ -576,7 +243,7 @@ class ChatSession extends ChangeNotifier {
     if (lower.startsWith('/room')) {
       final parts = text.split(RegExp(r'\s+'));
       if (parts.length < 2) {
-        _sys('room $room   friend types: /room $room');
+        _sys('room $room   friend on another network types: /room $room');
         return;
       }
       await joinRoom(parts[1]);
@@ -585,7 +252,7 @@ class ChatSession extends ChangeNotifier {
     if (lower.startsWith('/join')) {
       final parts = text.split(RegExp(r'\s+'));
       if (parts.length < 2) {
-        _sys('usage: /join ROOM  or  /join LAN-CODE');
+        _sys('usage: /join LAN-CODE');
         return;
       }
       await _joinTarget(parts.sublist(1).join(' '));
@@ -593,10 +260,6 @@ class ChatSession extends ChangeNotifier {
     }
     if (text.startsWith('/')) {
       _sys('unknown command ${text.split(' ').first}');
-      return;
-    }
-    if (waitingOutside) {
-      _sys('waiting outside  host has not let you in');
       return;
     }
     final mid = newMessageId();
@@ -627,249 +290,32 @@ class ChatSession extends ChangeNotifier {
       _sys('room code too short');
       return;
     }
-    _hostBeacon?.cancel();
-    _knock?.cancel();
-    await _wan?.close(clearRetain: ctl?.isHost == true);
-    final dhSk = _dhSk;
-    if (dhSk == null) {
-      return;
-    }
-    _lan?.room = room;
-    ctl = RoomCtl(peerId: peerId, nick: nick, room: room, dhSk: dhSk, operatorSk: _operatorSk);
-    await ctl!.ensureDhPk();
+    await _wan?.close();
     _wan = WanRoom(peerId: peerId, nick: nick, room: room, onPayload: _onWan);
     final ok = await _wan!.connect();
     if (!ok) {
       _wan = null;
-      _sys('room offline  no internet / cell blocked mqtt?');
+      _sys('internet room offline  same Wi-Fi still works');
       return;
     }
+    _wan!.setRoomKey(await roomAesKey(room));
     _sys('room $room  internet on  ($transport)');
-    await _enterRoom();
-  }
-
-  Future<void> _enterRoom() async {
-    final c = ctl;
-    if (c == null) {
-      return;
-    }
-    _knock?.cancel();
-    _signal(c.askPayload(did: did));
-    for (var i = 0; i < 3; i++) {
-      await Future<void>.delayed(const Duration(seconds: 1));
-      if (!running || ctl != c) {
-        return;
-      }
-      if (c.admitted || (c.hostId != null && c.hostId != c.peerId)) {
-        break;
-      }
-      _signal(c.askPayload(did: did));
-    }
-    if (!running || ctl != c) {
-      return;
-    }
-    if (c.hostId != null && c.hostId != c.peerId) {
-      if (c.admitted) {
-        _sys('in the room');
-      } else if (c.locked) {
-        _sys('waiting outside  host must /admit you');
-        _startKnocking();
-      } else {
-        _sys('knocking  waiting for host key');
-        _startKnocking();
-      }
-      notifyListeners();
-      return;
-    }
-    c.becomeHost();
-    _syncKey();
-    _signal(c.hostPayload());
-    await _flushDoor();
-    _sys('you are host of this room');
-    _startHostBeacon();
-    notifyListeners();
-  }
-
-  Future<void> _flushDoor() async {
-    final c = ctl;
-    if (c == null || !c.isHost) {
-      return;
-    }
-    for (final member in c.waiting.values.toList()) {
-      if (c.isMuted(member.peerId, member.nick, member.pk, did: member.did)) {
-        final left = c.muteLeft(member.peerId, member.nick, member.pk, did: member.did);
-        _signal({'t': 'deny', 'to': member.peerId, 'why': 'spam', 'sec': left});
-        continue;
-      }
-      if (!c.locked && !c.kicked.contains(member.peerId)) {
-        final admit = await c.autoAdmitPayload(member);
-        if (admit != null) {
-          _signal(admit);
-        }
-      } else if (c.locked) {
-        _sys('${member.nick} waits at the door  /admit ${member.nick}');
-      }
-    }
   }
 
   void _onWan(Map<String, dynamic> payload, String channel) {
-    unawaited(_handleWan(payload, channel));
-  }
-
-  Future<void> _handleWan(Map<String, dynamic> payload, String channel) async {
-    final c = ctl;
-    if (c == null) {
-      return;
-    }
     final t = '${payload['t'] ?? ''}';
     final name = '${payload['nick'] ?? 'peer'}';
-    final id = '${payload['id'] ?? ''}';
-    final otherRoom = '${payload['room'] ?? ''}';
-    if (otherRoom.isNotEmpty) {
-      _lanRooms[id] = normRoom(otherRoom);
-    }
-    if (channel != 'chat' && otherRoom.isNotEmpty && normRoom(otherRoom) != room) {
-      if (t == 'hello') {
-        final key = '$id:$otherRoom';
-        if (_hinted.add(key)) {
-          _sys('$name is in room $otherRoom  type /room $otherRoom to join');
-        }
-      }
-      return;
-    }
     if (channel == 'chat') {
-      if (!c.admitted) {
-        return;
-      }
       if (t == 'chat') {
-        _onChat(name, '${payload['text'] ?? ''}', '${payload['mid'] ?? ''}', id);
+        _onChat(name, '${payload['text'] ?? ''}', '${payload['mid'] ?? ''}', '${payload['id'] ?? ''}');
       } else if (t == 'typing') {
         setTyping(name, payload['on'] == true);
       }
       return;
     }
-    if (t == 'claim') {
-      final wasHost = c.isHost;
-      if (!await c.takeClaim(payload)) {
-        return;
-      }
-      if (wasHost && !c.isHost) {
-        final handoff = await c.handoffPayload(id);
-        if (handoff != null) {
-          _signal(handoff);
-        }
-        _sys('$name took host with the master key');
-      } else if (c.isHost) {
-        _syncKey();
-        _startHostBeacon();
-        _sys('you hold this room');
-      }
-      notifyListeners();
-      return;
-    }
-    if (t == 'host') {
-      if (id == peerId) {
-        return;
-      }
-      final yielded = c.onHost(payload);
-      if (yielded) {
-        _syncKey();
-        _signal(c.askPayload(did: did));
-        _sys('yielding host');
-      } else if (!c.isHost && !c.admitted) {
-        _signal(c.askPayload(did: did));
-      }
-      notifyListeners();
-      return;
-    }
-    if (t == 'mode') {
-      if (!c.isHost) {
-        c.locked = '${payload['mode'] ?? 'open'}' == 'private';
-        notifyListeners();
-      }
-      return;
-    }
-    if (t == 'ask' || t == 'hello') {
-      Uint8List? pk;
-      try {
-        pk = fromHex('${payload['pk'] ?? ''}');
-      } catch (_) {}
-      if (pk == null || pk.length != 32) {
-        return;
-      }
-      await _onAsk(id, name, pk, '${payload['did'] ?? ''}');
-      return;
-    }
-    if (t == 'admit' || t == 'rekey' || t == 'handoff') {
-      if ('${payload['to'] ?? ''}' != peerId) {
-        return;
-      }
-      final epoch = int.tryParse('${payload['epoch'] ?? 0}') ?? 0;
-      if (await c.acceptKey('${payload['box'] ?? ''}', epoch)) {
-        _knock?.cancel();
-        _knock = null;
-        _syncKey();
-        _sys(t == 'rekey' ? 'room key rotated' : 'in the room');
-        notifyListeners();
-      }
-      return;
-    }
-    if (t == 'deny') {
-      if ('${payload['to'] ?? ''}' == peerId) {
-        if ('${payload['why'] ?? ''}' == 'spam') {
-          _sys('host blocked you for spam  wait ${payload['sec'] ?? SpamWatch.banSec}s');
-        } else {
-          _sys('host kept you outside');
-        }
-      }
-      return;
-    }
-    if (t == 'kick') {
-      if ('${payload['to'] ?? ''}' != peerId) {
-        return;
-      }
-      kicked = true;
-      if ('${payload['why'] ?? ''}' == 'spam') {
-        _sys('kicked for spam  wait ${payload['sec'] ?? SpamWatch.banSec}s before joining again');
-      } else {
-        _sys('kicked');
-      }
-      await stop();
-      return;
-    }
     if (t == 'bye') {
       typists.remove(name);
-      c.waiting.remove(id);
-      c.members.remove(id);
-      if (c.hostId == id && !c.isHost) {
-        c.hostId = null;
-      }
-    }
-  }
-
-  Future<void> _onAsk(String id, String name, Uint8List pk, String did) async {
-    final c = ctl;
-    if (c == null) {
-      return;
-    }
-    final member = Member(id, name, pk, did: did);
-    c.remember(id, name, pk, did: did);
-    if (!c.isHost) {
-      return;
-    }
-    if (c.isMuted(id, name, pk, did: did)) {
-      final left = c.muteLeft(id, name, pk, did: did);
-      _signal({'t': 'deny', 'to': id, 'why': 'spam', 'sec': left});
-      _sys('$name blocked for spam  ${left}s');
-      return;
-    }
-    if (!c.locked && !c.kicked.contains(id)) {
-      final admit = await c.autoAdmitPayload(member);
-      if (admit != null) {
-        _signal(admit);
-      }
-    } else if (c.locked) {
-      _sys('$name waits at the door  /admit $name');
+      notifyListeners();
     }
   }
 
@@ -901,9 +347,7 @@ class ChatSession extends ChangeNotifier {
   Future<void> stop() async {
     running = false;
     _typingExpire?.cancel();
-    _hostBeacon?.cancel();
-    _knock?.cancel();
-    await _wan?.close(clearRetain: ctl?.isHost == true);
+    await _wan?.close();
     await _lan?.close();
     lines.clear();
     typists.clear();

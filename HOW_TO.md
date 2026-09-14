@@ -45,9 +45,7 @@ lanchat
 
 3. Press **Enter**.
 4. The first time, you will see **DIRECTIVE 01**. Type `ACCEPT` and press Enter. You are responsible for what you send; the maker of the app is not. This is for private chat, not illegal activity. After that, it is remembered on this computer.
-5. Wait for the green screen. You will see a **room** code, like `K7M2QX`.
-
-That code is the “meeting room” name. Write it down or keep the window open.
+5. Wait for the green screen.
 
 To start with your name:
 
@@ -61,79 +59,42 @@ lanchat --name Ada
 
 1. Open the **LANCHAT** app.
 2. The first time, read **DIRECTIVE 01** and tap **ACCEPT**. Same rules as the computer: you are responsible; the maker is not; private chat only, not illegal activity.
-3. Type your **name** (who you are), not the room code.
-4. Type the computer’s **room code** in the second box (look for `room=XXXXXX` on the computer).
-5. Tap **OPEN LATTICE**.
-6. If you already opened the app, type `/room XXXXXX` in the bottom box and tap **SEND**.
+3. Type your **name**.
+4. If you are on the **same Wi-Fi** as the computer, leave the room box **blank** and tap **OPEN LATTICE**. You should find each other with no code.
+5. If you are on **mobile data** or another network, type the computer’s **room** code, then tap **OPEN LATTICE**.
 
 ---
 
-## 3. Put both in the same room (this is the usual way)
+## 3. Same Wi-Fi (usual way)
 
-The computer and the phone each pick their own room when they start. **They will not see each other until both use the same code.**
+Open `lanchat` on the computer and the app on the phone. Same Wi-Fi or the same hotspot. **No room code.** They find each other.
 
-**Easy method:** copy the phone’s room code.
-
-On the computer, type:
-
-```
-/room K7M2QX
-```
-
-Use *your* real code, not this example. Press Enter.
-
-Or do it the other way: copy the computer’s code, and on the phone type `/room` plus that code.
-
-When it works you will see something like “internet on”. Then just type a normal message and send it.
-
-- Your messages show on the **left**.
-- Their messages show on the **right**.
-
-This works if both have internet — Wi‑Fi, mobile data, even different cities.
-
----
-
-## 4. Same Wi‑Fi only (no internet)
-
-If the laptop and a **real phone** are on the same Wi‑Fi or the same hotspot:
-
-- They often find each other by themselves.
-- If not, type `/code` on one device. You get a join code like `ABCD-EFGH-12`.
-- On the other device type `/join ABCD-EFGH-12`.
+If that fails, type `/code` on one device and `/join ABCD-EFGH-12` on the other.
 
 This usually **does not work** with the Android emulator. Use `/room` instead.
 
 ---
 
-## 5. Host, private rooms, master key
+## 4. Different networks (internet)
 
-The first person in a room is the **host**. They can lock the door and kick people.
+If one person is on mobile data or another city, share the **room** code.
 
-On the computer (host):
-
-```
-/lock
-/admit Ada
-/kick Ada
-```
-
-If the room is private, a phone that joins sees **WAITING OUTSIDE** until the host admits them. Chat is encrypted: the internet relay cannot read it. Only people the host let in can.
-
-**Master key (you):** this app’s owner key lives on your computer at `~/.local/share/lanchat/master.key` (Windows: `%LOCALAPPDATA%\lanchat\master.key`). Any device with that key can take host and lock **any** room:
+On the computer you will see something like `room=K7M2QX`. On the other device type:
 
 ```
-/lock R4LRNS
+/room K7M2QX
 ```
 
-That joins that room, takes host, and makes it private. On the **same Wi‑Fi**, type `/lock lan` — if one other room is nearby, it takes that one. If several are on the LAN, it lists them so you can `/lock CODE`. Plain `/lock` only locks **this** room.
+Then just type a message and send it.
 
-On a new phone, paste the key into **MASTER KEY** on the gate, or type `/claim` and paste. Do not send this file to friends.
+- Your messages show on the **left**.
+- Their messages show on the **right**.
 
-Friends without the key cannot fake host.
+---
 
-**Spam:** the host auto-kicks people who flood (very fast messages, or the same line over and over). That person / phone cannot join again for **30 seconds**.
+## Updates
 
-**Updates:** when a friend types `lanchat`, if they have internet it pulls the latest GitHub build, then starts. If they are offline, it skips the update and starts as usual. Force skip with `lanchat --no-update`. The phone app does not self-update; send them a new APK when you change it.
+When a friend types `lanchat`, if they have internet it pulls the latest GitHub build, then starts. If they are offline, it skips the update and starts as usual. Force skip with `lanchat --no-update`. The phone app does not self-update; send them a new APK when you change it.
 
 ---
 
@@ -145,21 +106,9 @@ Or type one of these:
 
 | Type this | What happens |
 |---|---|
-| `/lock` | Make **this** room private. Host, or master key. |
-| `/lock CODE` | Master key: join that room, take host, make it private |
-| `/lock lan` | Master key: take the nearby same-Wi‑Fi room and lock it |
-| `/open` | Let anyone with the code in. Host only. |
-| `/waiting` | List people at the door. Host only. |
-| `/admit Ada` | Let that person in. Host only. |
-| `/deny Ada` | Send them away. Host only. |
-| `/kick Ada` | Remove someone already in. Host only. |
-| *(automatic)* | Fast / repeat spam is kicked; they wait 30s to rejoin |
-| `/claim KEY` | Paste your master key and take host in this room. |
-| `/master` | Says whether this device can auto-take host. Never prints the key. |
-| `/host` | Show if you are host, and if the room is open or private. |
-| `/room ABC123` | Join that meeting room (both people use the same code) |
-| `/code` | Show your room code and Wi‑Fi join code again |
-| `/join ABCD-EFGH-12` | Join someone on the same Wi‑Fi |
+| `/room ABC123` | Meet someone on another network (same code) |
+| `/code` | Show your room code and Wi-Fi backup join code |
+| `/join ABCD-EFGH-12` | Backup if same-Wi-Fi auto-find fails |
 | `/nick Sam` | Change your name |
 | `/clear` | Wipe the screen |
 | `/help` | Show the list |
@@ -198,10 +147,10 @@ Pick your phone or the Android emulator.
 
 ## If they cannot see each other
 
-1. Both must type the **same** `/room` code. Spelling matters.
-2. Both need internet for `/room`.
-3. On a real iPhone, allow **Local Network** if you want same-Wi‑Fi join.
-4. Three windows on one computer each start their **own** room. Copy the first window’s `room=XXXXXX` and type `/room XXXXXX` in the others.
-5. Quit and open again if you are stuck. A new room code is created each time — share the new one.
+1. **Same Wi-Fi:** both just open the app. Allow Local Network on iPhone. On Windows use a Private network.
+2. If same Wi-Fi still fails, `/code` then `/join` the backup code.
+3. **Different network:** both type the same `/room` code. Both need internet.
+4. Three windows on one computer still see each other on LAN with no code.
+5. Quit and open again if you are stuck.
 
-That is all. Same room code → you are in the same chat.
+That is all. Same Wi-Fi → chat. Other network → same room code.

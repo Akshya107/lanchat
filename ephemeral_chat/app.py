@@ -13,37 +13,29 @@ from collections.abc import Sequence
 from . import __version__
 from .beacon import Beacon
 from .camouflage import fake_line, jitter_delay, seed_uptime
-from .crypto import from_hex, new_x25519
+from .crypto import LAN_ROOM, lan_aes_key, new_x25519, room_aes_key
 from .discovery import Discovery
 from .hello import boot_sequence
 from .join import encode_join, new_room_code, parse_target
 from .net import Mesh
-from .operator import device_id, has_master_key, import_operator_key, load_operator_key
-from .roomctl import Member, RoomCtl
 from .sound import play_ping
-from .spam import BAN_SEC
 from .store import MemoryStore
 from .ui import ChatUI
 from .util import default_nick, local_ipv4, local_ipv4_all, new_peer_id
 from .policy import require_accept
 from .wan import WanRoom
 
-HELP = (
-    "slash: /join /room /lock [ROOM|lan] /open /admit NAME /deny NAME /kick NAME /waiting "
-    "/claim KEY /master /host /code /clear /peers /nick NAME /mute /quit"
-)
+HELP = "slash: /join /room /code /clear /peers /nick NAME /mute /quit"
 
 
 class ChatApp:
     def __init__(self, nick: str, sound: bool = True) -> None:
         self.peer_id = new_peer_id()
-        self.did = device_id()
         self.nick = nick[:24] or default_nick()
         self.local_ip = local_ipv4()
         self.sound = sound
         self.store = MemoryStore()
         self._dh_sk, _dh_pk = new_x25519()
-        self.ctl: RoomCtl | None = None
         self.mesh = Mesh(
             peer_id=self.peer_id,
             nick=self.nick,
@@ -52,15 +44,14 @@ class ChatApp:
             on_leave=self._on_leave,
             on_nick=self._on_nick,
             on_typing=self._on_typing,
+            room=LAN_ROOM,
             dh_pk_hex=_dh_pk.hex(),
-            get_room_key=self._room_key,
-            on_signal=self._on_lan_signal,
+            get_room_key=lan_aes_key,
         )
         self.discovery: Discovery | None = None
         self.beacon: Beacon | None = None
         self.wan: WanRoom | None = None
         self.room = new_room_code()
-        self.mesh.room = self.room
         self.tcp_port = 0
         self._last_typing_sent = 0.0
         self._typing_on = False
@@ -74,17 +65,8 @@ class ChatApp:
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._log_task: asyncio.Task[None] | None = None
-        self._host_task: asyncio.Task[None] | None = None
-        self._knock_task: asyncio.Task[None] | None = None
         self._running = True
         self._boot = seed_uptime()
-        self._hinted: set[str] = set()
-        self._lan_rooms: dict[str, str] = {}
-
-    def _room_key(self) -> bytes | None:
-        if self.ctl is None:
-            return None
-        return self.ctl.room_key
 
     def _join_code(self) -> str:
         try:
@@ -97,12 +79,6 @@ class ChatApp:
         token = self._join_code().replace("-", "")
         extra = f"  token={token}" if token else ""
         extra += f"  room={self.room}"
-        role = "host" if self.ctl and self.ctl.is_host else "guest"
-        mode = self.ctl.mode if self.ctl else "open"
-        wait_n = len(self.ctl.waiting) if self.ctl else 0
-        extra += f"  {role}  {mode}  waiting={wait_n}"
-        if self.ctl and not self.ctl.admitted:
-            extra += "  lobby"
         return (
             f"api-gateway  {self.local_ip}  workers={n}  "
             f"tail=/var/log/api/access.log  {self._boot}{extra}"
@@ -125,27 +101,10 @@ class ChatApp:
         self.ui.invalidate()
 
     def _on_chat(self, nick: str, text: str, mid: str, peer_id: str = "") -> None:
-        if self.ctl is not None and not self.ctl.admitted:
-            return
-        if self.ctl is not None and self.ctl.is_host and peer_id and peer_id != self.peer_id:
-            if self.ctl.spam.note(peer_id, text):
-                self._spam_kick(peer_id, nick)
-                return
         if self.store.chat(nick, text, own=False, mid=mid):
             self.ui.invalidate()
             if self.sound:
                 play_ping()
-
-    def _spam_kick(self, peer_id: str, nick: str) -> None:
-        if self.ctl is None or not self.ctl.is_host:
-            return
-        payloads = self.ctl.kick_payloads(peer_id or nick, spam=True)
-        if not payloads:
-            return
-        self._sync_key()
-        for payload in payloads:
-            self._signal(payload)
-        self._note(f"kicked {nick}  spam  wait {BAN_SEC}s")
 
     def _on_join(self, _peer_id: str, nick: str) -> None:
         self.store.system(f"node={nick} event=register region=local")
@@ -153,20 +112,13 @@ class ChatApp:
 
     def _on_leave(self, peer_id: str, nick: str) -> None:
         self.ui.set_typing(nick, False)
-        if self.ctl is not None and peer_id:
-            self.ctl.waiting.pop(peer_id, None)
-            self.ctl.members.pop(peer_id, None)
         self.store.system(f"node={nick} event=drain region=local")
         self.ui.invalidate()
 
     def _on_typing(self, nick: str, active: bool) -> None:
-        if self.ctl is not None and not self.ctl.admitted:
-            return
         self.ui.set_typing(nick, active)
 
     def _on_local_typing(self, active: bool) -> None:
-        if self.ctl is None or not self.ctl.admitted:
-            return
         now = time.time()
         if active and self._typing_on and now - self._last_typing_sent < 0.4:
             return
@@ -190,104 +142,12 @@ class ChatApp:
         self.ui.invalidate()
 
     def _on_peer_up(self, peer_id: str, nick: str, host: str, port: int, room: str = "") -> None:
-        if room:
-            self._lan_rooms[peer_id] = WanRoom._norm(room)
         if self._loop is None:
             return
         self._loop.create_task(self.mesh.connect(peer_id, nick, host, port))
 
     def _on_peer_down(self, _peer_id: str) -> None:
         return
-
-    def _host_only(self) -> bool:
-        if self.ctl is not None and self.ctl.is_host:
-            return True
-        self._note("host only")
-        return False
-
-    def _lan_other_rooms(self) -> list[str]:
-        seen: list[str] = []
-        for room in self._lan_rooms.values():
-            if room and room != self.room and room not in seen:
-                seen.append(room)
-        return seen
-
-    async def _operator_lock(self, raw: str) -> None:
-        has_key = (self.ctl is not None and self.ctl.operator_sk is not None) or has_master_key()
-        is_host = self.ctl is not None and self.ctl.is_host
-        code = raw.strip()
-        lan_take = code.lower() in {"lan", "wifi", "local"}
-        if lan_take:
-            if not has_key:
-                self._note("master key needed")
-                return
-            others = self._lan_other_rooms()
-            if len(others) == 1:
-                self._note(f"same network  taking room {others[0]}")
-                await self._set_room(others[0])
-            elif len(others) > 1:
-                self._note("same network rooms: " + ", ".join(others) + "  type /lock CODE")
-                return
-            else:
-                self._note("no other room on this network")
-                return
-            await self._take_and_lock()
-            return
-        if code:
-            if not has_key:
-                self._note("master key needed to lock another room")
-                return
-            target = WanRoom._norm(code)
-            if target != self.room:
-                await self._set_room(target)
-            await self._take_and_lock()
-            return
-        if not is_host and not has_key:
-            self._note("host only")
-            return
-        await self._take_and_lock()
-
-    async def _take_and_lock(self) -> None:
-        ctl = self.ctl
-        if ctl is None:
-            self._note("no room yet")
-            return
-        if ctl.operator_sk is None:
-            ctl.operator_sk = load_operator_key()
-        if not ctl.is_host:
-            if ctl.operator_sk is None:
-                self._note("master key or host only")
-                return
-            claim = ctl.claim_payload()
-            if claim:
-                self._signal(claim)
-            await asyncio.sleep(0.4)
-            if not self._running or self.ctl is not ctl:
-                return
-            ctl.become_host()
-            self._sync_key()
-            self._signal(ctl.host_payload())
-            self._flush_door()
-            self._start_host_beacon()
-            self._note("you hold this room  (master key)")
-        ctl.locked = True
-        self._signal({"t": "mode", "mode": "private"})
-        self._signal(ctl.host_payload())
-        self._note(f"room {self.room} private  newcomers wait outside")
-
-    def _on_lan_signal(self, payload: dict) -> None:
-        self._on_wan(payload, "signal")
-
-    def _signal(self, payload: dict) -> None:
-        if self.ctl is not None:
-            payload.setdefault("room", self.ctl.room)
-        if self.wan is not None:
-            self.wan.publish_signal(payload)
-        self.mesh.broadcast_signal(payload)
-
-    def _sync_key(self) -> None:
-        if self.wan is not None and self.ctl is not None:
-            self.wan.set_room_key(self.ctl.room_key)
 
     async def _handle_line(self, raw: str) -> None:
         text = raw.strip()
@@ -306,7 +166,7 @@ class ChatApp:
         if lower == "/peers":
             peers = self.mesh.peers
             if not peers:
-                self._note("workers=1  waiting for LAN beacon")
+                self._note("workers=1  same Wi-Fi will show up here")
             else:
                 listing = ", ".join(f"{p.nick}" for p in peers)
                 self._note(f"workers={listing}")
@@ -314,124 +174,17 @@ class ChatApp:
         if lower in {"/code", "/listen"}:
             self._show_codes()
             return
-        if lower == "/host":
-            if self.ctl is None:
-                self._note("no room yet")
-                return
-            role = "host" if self.ctl.is_host else "guest"
-            door = "admitted" if self.ctl.admitted else "waiting outside"
-            self._note(f"you={role}  room={self.room}  {self.ctl.mode}  {door}")
-            return
-        if lower == "/master":
-            self._note("master key on this device" if has_master_key() else "no master key on this device")
-            return
-        if lower == "/waiting":
-            if not self._host_only() or self.ctl is None:
-                return
-            if not self.ctl.waiting:
-                self._note("door is empty")
-                return
-            names = ", ".join(f"{m.nick}" for m in self.ctl.waiting.values())
-            self._note(f"waiting: {names}")
-            return
-        if lower == "/lock" or lower == "/private" or lower.startswith("/lock ") or lower.startswith("/private "):
-            rest = text.split(maxsplit=1)
-            code = rest[1].strip() if len(rest) > 1 else ""
-            await self._operator_lock(code)
-            return
-        if lower in {"/open", "/unlock"}:
-            if not self._host_only() or self.ctl is None:
-                return
-            self.ctl.locked = False
-            self._signal({"t": "mode", "mode": "open"})
-            self._signal(self.ctl.host_payload())
-            for member in list(self.ctl.waiting.values()):
-                payload = self.ctl.auto_admit_payload(member)
-                if payload:
-                    self._signal(payload)
-            self._note("room open")
-            return
-        if lower.startswith("/admit"):
-            if not self._host_only() or self.ctl is None:
-                return
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                self._note("usage: /admit NAME")
-                return
-            payloads = self.ctl.admit_payloads(parts[1].strip())
-            if not payloads:
-                self._note("no one by that name at the door")
-                return
-            for payload in payloads:
-                self._signal(payload)
-            self._note(f"admitted {parts[1].strip()}")
-            return
-        if lower.startswith("/deny"):
-            if not self._host_only() or self.ctl is None:
-                return
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                self._note("usage: /deny NAME")
-                return
-            payload = self.ctl.deny_payload(parts[1].strip())
-            if payload is None:
-                self._note("no one by that name at the door")
-                return
-            self._signal(payload)
-            self._note(f"denied {parts[1].strip()}")
-            return
-        if lower.startswith("/kick"):
-            if not self._host_only() or self.ctl is None:
-                return
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                self._note("usage: /kick NAME")
-                return
-            payloads = self.ctl.kick_payloads(parts[1].strip())
-            if not payloads:
-                self._note("no one by that name in the room")
-                return
-            self._sync_key()
-            for payload in payloads:
-                self._signal(payload)
-            self._note(f"kicked {parts[1].strip()}")
-            return
-        if lower.startswith("/claim"):
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2 or not parts[1].strip():
-                self._note("usage: /claim KEY   paste the master key")
-                return
-            sk = import_operator_key(parts[1].strip())
-            if sk is None:
-                self._note("claim failed")
-                return
-            if self.ctl is not None:
-                self.ctl.operator_sk = sk
-                self.ctl.host_id = self.peer_id
-                claim = self.ctl.claim_payload()
-                if claim:
-                    self._signal(claim)
-                await asyncio.sleep(1.0)
-                if self.ctl is not None:
-                    self.ctl.become_host()
-                    self._sync_key()
-                    self._signal(self.ctl.host_payload())
-                    self._start_host_beacon()
-            self._note("you hold this room")
-            return
         if lower.startswith("/join"):
             parts = text.split(maxsplit=1)
             if len(parts) < 2 or not parts[1].strip():
-                self.store.add("own", "*", "usage: /join LAN-CODE   or  /join ROOM   or  /join 192.168.1.10:1234")
-                self.ui.invalidate()
+                self._note("usage: /join LAN-CODE   or  /join 192.168.1.10:1234")
                 return
             await self._join_target(parts[1].strip())
             return
         if lower.startswith("/room"):
             parts = text.split(maxsplit=1)
             if len(parts) < 2 or not parts[1].strip():
-                self.store.add("own", "*", f"room {self.room}   friend types: /room {self.room}")
-                self.ui.invalidate()
+                self._note(f"room {self.room}   friend on another network: /room {self.room}")
                 return
             await self._set_room(parts[1].strip())
             return
@@ -456,15 +209,10 @@ class ChatApp:
                 await self.discovery.set_nick(new_nick)
             if self.wan is not None:
                 self.wan.set_nick(new_nick)
-            if self.ctl is not None:
-                self.ctl.nick = new_nick
             self._note(f"{old} is now {new_nick}")
             return
         if text.startswith("/"):
             self._note(f"Unknown command {text.split()[0]}. Try /help")
-            return
-        if self.ctl is None or not self.ctl.admitted:
-            self._note("waiting outside  host has not let you in")
             return
         text = text[:2000]
         mid = await self.mesh.broadcast_chat(text)
@@ -481,8 +229,8 @@ class ChatApp:
                 code = encode_join(ip, self.tcp_port)
             except Exception:
                 continue
-            self.store.add("own", "*", f"join {code}   ({ip}:{self.tcp_port})  same Wi-Fi")
-        self.store.add("own", "*", f"room {self.room}   any internet: /room {self.room}")
+            self.store.add("own", "*", f"same Wi-Fi: just open lanchat  backup /join {code}")
+        self.store.add("own", "*", f"other network: /room {self.room}")
         self.ui.invalidate()
 
     async def _join_target(self, raw: str) -> None:
@@ -509,253 +257,36 @@ class ChatApp:
             self.store.add("own", "*", "room code too short")
             self.ui.invalidate()
             return
-        if self._host_task is not None:
-            self._host_task.cancel()
-            self._host_task = None
-        self._stop_knocking()
         if self.wan is not None:
-            self.wan.close(clear_retain=self.ctl.is_host if self.ctl else False)
+            self.wan.close()
             self.wan = None
         self.room = room
-        self.mesh.room = room
         if self.beacon is not None:
             self.beacon.room = room
         if self.discovery is not None:
             await self.discovery.set_room(room)
-        self.ctl = RoomCtl(
-            peer_id=self.peer_id,
-            nick=self.nick,
-            room=room,
-            dh_sk=self._dh_sk,
-            operator_sk=load_operator_key(),
-        )
         self.wan = WanRoom(self.peer_id, self.nick, self.room, self._on_wan)
         ok = await self.wan.start()
         if not ok:
             self.wan = None
-            self.store.add("own", "*", "room offline  no internet?")
+            self.store.add("own", "*", "internet room offline  same Wi-Fi still works")
             self.ui.invalidate()
             return
+        self.wan.set_room_key(room_aes_key(self.room))
         self.store.add("own", "*", f"room {self.room}  internet on")
         self.ui.invalidate()
-        await self._enter_room()
-
-    async def _enter_room(self) -> None:
-        ctl = self.ctl
-        if ctl is None:
-            return
-        self._stop_knocking()
-        self._signal(ctl.ask_payload(self.did))
-        for _ in range(3):
-            await asyncio.sleep(1.0)
-            if not self._running or self.ctl is not ctl:
-                return
-            if ctl.admitted or (ctl.host_id and ctl.host_id != ctl.peer_id):
-                break
-            self._signal(ctl.ask_payload(self.did))
-        if not self._running or self.ctl is not ctl:
-            return
-        if ctl.host_id and ctl.host_id != ctl.peer_id:
-            if ctl.admitted:
-                self._note("in the room")
-                return
-            if ctl.locked:
-                self._note("waiting outside  host must /admit you")
-            else:
-                self._note("knocking  waiting for host key")
-            self._start_knocking()
-            return
-        ctl.become_host()
-        self._sync_key()
-        self._signal(ctl.host_payload())
-        self._flush_door()
-        self._note("you are host of this room")
-        self._start_host_beacon()
-
-    def _flush_door(self) -> None:
-        ctl = self.ctl
-        if ctl is None or not ctl.is_host:
-            return
-        for member in list(ctl.waiting.values()):
-            if ctl.is_muted(member.peer_id, member.nick, member.pk, member.did):
-                left = ctl.mute_left(member.peer_id, member.nick, member.pk, member.did)
-                self._signal({"t": "deny", "to": member.peer_id, "why": "spam", "sec": left})
-                continue
-            if not ctl.locked and member.peer_id not in ctl.kicked:
-                admit = ctl.auto_admit_payload(member)
-                if admit:
-                    self._signal(admit)
-            elif ctl.locked:
-                self._note(f"{member.nick} waits at the door  /admit {member.nick}")
-
-    def _start_knocking(self) -> None:
-        if self._loop is None:
-            return
-        self._stop_knocking()
-        self._knock_task = self._loop.create_task(self._knock_loop())
-
-    def _stop_knocking(self) -> None:
-        if self._knock_task is not None:
-            self._knock_task.cancel()
-            self._knock_task = None
-
-    async def _knock_loop(self) -> None:
-        try:
-            while self._running and self.ctl is not None and not self.ctl.is_host and not self.ctl.admitted:
-                self._signal(self.ctl.ask_payload(self.did))
-                await asyncio.sleep(2)
-        except asyncio.CancelledError:
-            return
-
-    def _start_host_beacon(self) -> None:
-        if self._loop is None:
-            return
-        self._stop_knocking()
-        if self._host_task is not None:
-            self._host_task.cancel()
-        self._host_task = self._loop.create_task(self._host_beacon())
-
-    async def _host_beacon(self) -> None:
-        try:
-            while self._running and self.ctl is not None and self.ctl.is_host and self.wan is not None:
-                self._signal(self.ctl.host_payload())
-                await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            return
-
-    def _hint_other_room(self, peer_id: str, nick: str, room: str) -> None:
-        key = f"{peer_id}:{room}"
-        if not room or key in self._hinted:
-            return
-        self._hinted.add(key)
-        self._note(f"{nick} is in room {room}  type /room {room} to join")
-
-    def _on_ask(self, peer_id: str, nick: str, pk: bytes, did: str) -> None:
-        if self.ctl is None:
-            return
-        member = Member(peer_id, nick, pk, did)
-        self.ctl.remember(peer_id, nick, pk, did)
-        if not self.ctl.is_host:
-            return
-        if self.ctl.is_muted(peer_id, nick, pk, did):
-            left = self.ctl.mute_left(peer_id, nick, pk, did)
-            self._signal({"t": "deny", "to": peer_id, "why": "spam", "sec": left})
-            self._note(f"{nick} blocked for spam  {left}s")
-            return
-        if not self.ctl.locked and peer_id not in self.ctl.kicked:
-            admit = self.ctl.auto_admit_payload(member)
-            if admit:
-                self._signal(admit)
-        elif self.ctl.locked:
-            self._note(f"{nick} waits at the door  /admit {nick}")
 
     def _on_wan(self, payload: dict, channel: str = "signal") -> None:
-        if self.ctl is None:
-            return
         kind = str(payload.get("t") or "")
         nick = str(payload.get("nick") or "peer")[:24]
-        peer_id = str(payload.get("id") or "")
-        other_room = str(payload.get("room") or "")
-        if other_room:
-            self._lan_rooms[peer_id] = WanRoom._norm(other_room)
-        if channel != "chat" and other_room and WanRoom._norm(other_room) != self.room:
-            if kind == "hello":
-                self._hint_other_room(peer_id, nick, other_room)
-            return
         if channel == "chat":
-            if not self.ctl.admitted:
-                return
             if kind == "chat":
-                self._on_chat(
-                    nick,
-                    str(payload.get("text") or ""),
-                    str(payload.get("mid") or ""),
-                    peer_id,
-                )
+                self._on_chat(nick, str(payload.get("text") or ""), str(payload.get("mid") or ""))
             elif kind == "typing":
                 self._on_typing(nick, bool(payload.get("on")))
             return
-        if kind == "claim":
-            was_host = self.ctl.is_host
-            if not self.ctl.take_claim(payload):
-                return
-            if was_host and not self.ctl.is_host:
-                handoff = self.ctl.handoff_payload(peer_id)
-                if handoff:
-                    self._signal(handoff)
-                self._note(f"{nick} took host with the master key")
-            elif self.ctl.is_host:
-                self._sync_key()
-                self._start_host_beacon()
-                self._note("you hold this room")
-            self.ui.invalidate()
-            return
-        if kind == "host":
-            if peer_id == self.peer_id:
-                return
-            yielded = self.ctl.on_host(payload)
-            if yielded:
-                self._sync_key()
-                self._signal(self.ctl.ask_payload(self.did))
-                self._note("yielding host")
-            elif not self.ctl.is_host and not self.ctl.admitted:
-                self._signal(self.ctl.ask_payload(self.did))
-            self.ui.invalidate()
-            return
-        if kind == "mode":
-            if not self.ctl.is_host:
-                self.ctl.locked = str(payload.get("mode") or "open") == "private"
-                self.ui.invalidate()
-            return
-        if kind == "ask":
-            pk = _pk_bytes(payload.get("pk"))
-            if pk is None:
-                return
-            self._on_ask(peer_id, nick, pk, str(payload.get("did") or "")[:32])
-            return
-        if kind in {"admit", "rekey", "handoff"}:
-            if str(payload.get("to") or "") != self.peer_id:
-                return
-            if self.ctl.accept_key(str(payload.get("box") or ""), int(payload.get("epoch") or 0)):
-                self._stop_knocking()
-                self._sync_key()
-                self._note("in the room" if kind != "rekey" else "room key rotated")
-            return
-        if kind == "deny":
-            if str(payload.get("to") or "") == self.peer_id:
-                why = str(payload.get("why") or "")
-                sec = int(payload.get("sec") or 0)
-                if why == "spam":
-                    self._note(f"host blocked you for spam  wait {sec or BAN_SEC}s")
-                else:
-                    self._note("host kept you outside")
-            return
-        if kind == "kick":
-            if str(payload.get("to") or "") != self.peer_id:
-                return
-            self.ctl.room_key = None
-            self._sync_key()
-            if self.wan is not None:
-                self.wan.close()
-                self.wan = None
-            self._note("kicked  session closed for this room")
-            why = str(payload.get("why") or "")
-            sec = int(payload.get("sec") or 0)
-            if why == "spam":
-                self._note(f"spam filter  wait {sec or BAN_SEC}s before joining again")
-            return
-        if kind == "hello":
-            pk = _pk_bytes(payload.get("pk"))
-            if pk is not None:
-                self._on_ask(peer_id, nick, pk, str(payload.get("did") or "")[:32])
-            return
-        elif kind == "bye":
+        if kind == "bye":
             self.ui.set_typing(nick, False)
-            if peer_id:
-                self.ctl.waiting.pop(peer_id, None)
-                self.ctl.members.pop(peer_id, None)
-                if self.ctl.host_id == peer_id and not self.ctl.is_host:
-                    self.ctl.host_id = None
             self.store.system(f"node={nick} event=drain region=wan")
             self.ui.invalidate()
 
@@ -817,10 +348,6 @@ class ChatApp:
 
     async def _shutdown(self) -> None:
         self._running = False
-        self._stop_knocking()
-        if self._host_task is not None:
-            self._host_task.cancel()
-            self._host_task = None
         if self._log_task is not None:
             self._log_task.cancel()
             try:
@@ -842,7 +369,7 @@ class ChatApp:
             self.beacon = None
         if self.wan is not None:
             try:
-                self.wan.close(clear_retain=bool(self.ctl and self.ctl.is_host))
+                self.wan.close()
             except Exception:
                 pass
             self.wan = None
@@ -851,14 +378,6 @@ class ChatApp:
         except Exception:
             pass
         self.store.clear()
-
-
-def _pk_bytes(value: object) -> bytes | None:
-    try:
-        raw = from_hex(str(value or ""))
-        return raw if len(raw) == 32 else None
-    except Exception:
-        return None
 
 
 def _silence_libraries() -> None:
